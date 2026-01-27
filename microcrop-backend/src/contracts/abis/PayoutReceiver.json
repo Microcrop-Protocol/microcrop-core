@@ -1,0 +1,19 @@
+[
+  {
+    "type": "event",
+    "name": "DamageReportReceived",
+    "inputs": [
+      { "name": "policyId", "type": "uint256", "indexed": true },
+      { "name": "damagePercent", "type": "uint256", "indexed": false },
+      { "name": "proof", "type": "bytes", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "PayoutProcessed",
+    "inputs": [
+      { "name": "policyId", "type": "uint256", "indexed": true },
+      { "name": "amount", "type": "uint256", "indexed": false }
+    ]
+  }
+]

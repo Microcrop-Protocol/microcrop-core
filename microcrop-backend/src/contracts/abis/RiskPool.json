@@ -1,0 +1,80 @@
+[
+  {
+    "type": "function",
+    "name": "createPolicy",
+    "inputs": [
+      { "name": "farmer", "type": "address" },
+      { "name": "sumInsured", "type": "uint256" },
+      { "name": "premium", "type": "uint256" },
+      { "name": "duration", "type": "uint256" }
+    ],
+    "outputs": [
+      { "name": "policyId", "type": "uint256" }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "processPayout",
+    "inputs": [
+      { "name": "policyId", "type": "uint256" },
+      { "name": "amount", "type": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "totalCapital",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalPremiums",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalPayouts",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "organization",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "address" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "PolicyCreated",
+    "inputs": [
+      { "name": "policyId", "type": "uint256", "indexed": true },
+      { "name": "organization", "type": "address", "indexed": true },
+      { "name": "premium", "type": "uint256", "indexed": false },
+      { "name": "platformFee", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "PayoutProcessed",
+    "inputs": [
+      { "name": "policyId", "type": "uint256", "indexed": true },
+      { "name": "amount", "type": "uint256", "indexed": false }
+    ]
+  }
+]

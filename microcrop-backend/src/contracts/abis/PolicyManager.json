@@ -1,0 +1,18 @@
+[
+  {
+    "type": "function",
+    "name": "policies",
+    "inputs": [
+      { "name": "policyId", "type": "uint256" }
+    ],
+    "outputs": [
+      { "name": "farmer", "type": "address" },
+      { "name": "sumInsured", "type": "uint256" },
+      { "name": "premium", "type": "uint256" },
+      { "name": "startDate", "type": "uint256" },
+      { "name": "endDate", "type": "uint256" },
+      { "name": "active", "type": "bool" }
+    ],
+    "stateMutability": "view"
+  }
+]
