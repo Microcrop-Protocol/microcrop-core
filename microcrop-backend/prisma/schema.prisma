@@ -1,0 +1,590 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// PLATFORM MANAGEMENT
+// ============================================
+
+model Organization {
+  id                 String   @id @default(uuid())
+  name               String
+  registrationNumber String   @unique
+  type               OrgType
+
+  // Blockchain
+  poolAddress  String? @unique
+  adminWallet  String?
+
+  // White-labeling
+  ussdShortCode String? @unique
+  brandName     String
+  brandColor    String? @default("#1a73e8")
+  logoUrl       String?
+
+  // API access
+  apiKey     String  @unique
+  apiSecret  String
+  webhookUrl String?
+
+  // Contact
+  contactPerson String?
+  contactPhone  String?
+  contactEmail  String?
+
+  // Location
+  county  String?
+  country String @default("Kenya")
+
+  // Usage tracking (analytics, NOT billing)
+  totalPoliciesCreated   Int      @default(0)
+  totalPremiumsCollected Decimal  @default(0) @db.Decimal(15, 2)
+  totalFeesGenerated     Decimal  @default(0) @db.Decimal(15, 2)
+  totalPayoutsProcessed  Decimal  @default(0) @db.Decimal(15, 2)
+  lastPolicyCreatedAt    DateTime?
+
+  // Relations
+  farmers      Farmer[]
+  plots        Plot[]
+  policies     Policy[]
+  payouts      Payout[]
+  transactions Transaction[]
+  users        User[]
+  platformFees PlatformFee[]
+
+  // Status
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([poolAddress])
+  @@index([isActive])
+  @@index([type])
+  @@index([country, county])
+}
+
+enum OrgType {
+  COOPERATIVE
+  NGO
+  MFI
+  INSURANCE_COMPANY
+  GOVERNMENT
+  OTHER
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+model User {
+  id       String   @id @default(uuid())
+  email    String   @unique
+  phone    String?  @unique
+  password String
+  firstName String
+  lastName  String
+  role      UserRole
+
+  // Multi-tenant
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Security
+  isActive      Boolean  @default(true)
+  emailVerified Boolean  @default(false)
+  lastLogin     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@index([organizationId])
+}
+
+enum UserRole {
+  PLATFORM_ADMIN
+  ORG_ADMIN
+  ORG_STAFF
+  FARMER
+}
+
+// ============================================
+// FARMER (Scoped to Organization)
+// ============================================
+
+model Farmer {
+  id String @id @default(uuid())
+
+  // Multi-tenant
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Identity
+  phoneNumber String
+  nationalId  String
+  firstName   String
+  lastName    String
+
+  // Optional blockchain identity
+  walletAddress String?
+
+  // Location
+  county    String
+  subCounty String
+  ward      String?
+  village   String?
+
+  // KYC
+  kycStatus         KYCStatus @default(PENDING)
+  kycApprovedBy     String?
+  kycApprovedAt     DateTime?
+  kycRejectedReason String?
+
+  // Relations
+  plots        Plot[]
+  policies     Policy[]
+  transactions Transaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, phoneNumber])
+  @@index([organizationId, kycStatus])
+  @@unique([organizationId, phoneNumber])
+  @@unique([organizationId, nationalId])
+}
+
+enum KYCStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============================================
+// PLOT (Scoped to Organization)
+// ============================================
+
+model Plot {
+  id String @id @default(uuid())
+
+  // Multi-tenant
+  farmerId       String
+  farmer         Farmer       @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Plot details
+  name         String
+  latitude     Decimal   @db.Decimal(10, 8)
+  longitude    Decimal   @db.Decimal(11, 8)
+  acreage      Decimal   @db.Decimal(10, 2)
+  cropType     CropType
+  plantingDate DateTime?
+
+  // Weather station assignment
+  weatherStationId String?
+
+  // Relations
+  policies Policy[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([farmerId])
+  @@index([cropType])
+  @@index([organizationId, farmerId])
+}
+
+enum CropType {
+  MAIZE
+  BEANS
+  RICE
+  SORGHUM
+  MILLET
+  VEGETABLES
+  CASSAVA
+  SWEET_POTATO
+  BANANA
+  COFFEE
+  TEA
+  WHEAT
+  BARLEY
+  POTATOES
+}
+
+// ============================================
+// POLICY (Scoped to Organization)
+// ============================================
+
+model Policy {
+  id String @id @default(uuid())
+
+  // Blockchain reference
+  policyId     String? @unique
+  policyNumber String  @unique
+
+  // Multi-tenant
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  poolAddress    String
+
+  // Policy ownership
+  farmerId String
+  farmer   Farmer @relation(fields: [farmerId], references: [id], onDelete: Restrict)
+  plotId   String
+  plot     Plot   @relation(fields: [plotId], references: [id], onDelete: Restrict)
+
+  // Coverage details
+  coverageType CoverageType
+  sumInsured   Decimal @db.Decimal(12, 2)
+  premium      Decimal @db.Decimal(12, 2)
+  platformFee  Decimal @db.Decimal(12, 2)
+  netPremium   Decimal @db.Decimal(12, 2)
+
+  // Duration
+  startDate    DateTime
+  endDate      DateTime
+  durationDays Int
+
+  // Status
+  status PolicyStatus @default(PENDING)
+
+  // Blockchain tracking
+  txHash      String?
+  blockNumber BigInt?
+
+  // Payment tracking
+  premiumPaid   Boolean   @default(false)
+  premiumTxHash String?
+  premiumPaidAt DateTime?
+
+  // Cancellation
+  cancelledAt        DateTime?
+  cancellationReason String?
+
+  // Relations
+  payouts           Payout[]
+  damageAssessments DamageAssessment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([farmerId])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@index([poolAddress])
+}
+
+enum CoverageType {
+  DROUGHT
+  FLOOD
+  BOTH
+}
+
+enum PolicyStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  CLAIMED
+}
+
+// ============================================
+// DAMAGE ASSESSMENT (From Chainlink CRE)
+// ============================================
+
+model DamageAssessment {
+  id String @id @default(uuid())
+
+  policyId String
+  policy   Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  // Damage calculation
+  weatherDamage   Decimal @db.Decimal(5, 2)
+  satelliteDamage Decimal @db.Decimal(5, 2)
+  combinedDamage  Decimal @db.Decimal(5, 2)
+
+  // Trigger
+  triggered   Boolean  @default(false)
+  triggerDate DateTime
+
+  // Blockchain proof
+  proofHash   String?
+  submittedBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([policyId])
+  @@index([triggerDate])
+  @@index([triggered])
+}
+
+// ============================================
+// PAYOUT (Scoped to Organization)
+// ============================================
+
+model Payout {
+  id String @id @default(uuid())
+
+  // Multi-tenant
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  // Payout details
+  policyId String
+  policy   Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  // Amount
+  amountUSDC    Decimal  @db.Decimal(12, 2)
+  amountKES     Decimal? @db.Decimal(12, 2)
+  exchangeRate  Decimal? @db.Decimal(10, 4)
+  damagePercent Decimal  @db.Decimal(5, 2)
+
+  // Processing
+  status PayoutStatus @default(PENDING)
+
+  // Blockchain
+  txHash      String?
+  blockNumber BigInt?
+
+  // M-Pesa delivery
+  mpesaRef   String?
+  mpesaPhone String?
+
+  // Timing
+  initiatedAt  DateTime  @default(now())
+  processingAt DateTime?
+  completedAt  DateTime?
+  failedAt     DateTime?
+
+  // Retry logic
+  retryCount    Int     @default(0)
+  failureReason String?
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([policyId])
+  @@index([status])
+  @@index([initiatedAt])
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// TRANSACTION (All Financial Transactions)
+// ============================================
+
+model Transaction {
+  id String @id @default(uuid())
+
+  // Multi-tenant
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  farmerId String?
+  farmer   Farmer? @relation(fields: [farmerId], references: [id], onDelete: SetNull)
+
+  // Transaction details
+  type     TransactionType
+  amount   Decimal           @db.Decimal(12, 2)
+  currency String            @default("USDC")
+  status   TransactionStatus @default(PENDING)
+
+  // References
+  policyId  String?
+  payoutId  String?
+  reference String @unique
+
+  // Payment details
+  phoneNumber String?
+  description String?
+  metadata    Json?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([organizationId])
+  @@index([organizationId, type])
+  @@index([farmerId])
+  @@index([type])
+  @@index([status])
+  @@index([reference])
+}
+
+enum TransactionType {
+  PREMIUM
+  PAYOUT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// PLATFORM FEE TRACKING (Analytics Only)
+// ============================================
+
+model PlatformFee {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  policyId    String
+  poolAddress String
+
+  // Fee details
+  premium    Decimal @db.Decimal(12, 2)
+  feeAmount  Decimal @db.Decimal(12, 2)
+  feePercent Decimal @db.Decimal(5, 2)
+
+  // Blockchain proof
+  txHash      String @unique
+  blockNumber BigInt
+
+  collectedAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([organizationId, collectedAt])
+  @@index([collectedAt])
+  @@index([poolAddress])
+}
+
+// ============================================
+// USSD SESSION
+// ============================================
+
+model USSDSession {
+  id        String @id @default(uuid())
+  sessionId String @unique
+
+  // Organization context
+  organizationId String
+  phoneNumber    String
+
+  // State machine
+  state String
+  data  Json
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@index([organizationId, phoneNumber])
+}
+
+// ============================================
+// BLOCKCHAIN SYNC STATE
+// ============================================
+
+model SyncState {
+  id              String   @id @default(uuid())
+  contractAddress String   @unique
+  contractName    String
+  lastBlock       BigInt
+  lastSyncAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([contractAddress])
+}
+
+// ============================================
+// TIME-SERIES DATA
+// ============================================
+
+model WeatherEvent {
+  id        String @id @default(uuid())
+  plotId    String
+  stationId String
+
+  timestamp   DateTime
+  rainfall    Decimal? @db.Decimal(10, 2)
+  temperature Decimal? @db.Decimal(5, 2)
+  humidity    Decimal? @db.Decimal(5, 2)
+  windSpeed   Decimal? @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([plotId, timestamp(sort: Desc)])
+  @@index([stationId])
+}
+
+model SatelliteData {
+  id     String @id @default(uuid())
+  plotId String
+
+  captureDate DateTime
+  ndvi        Decimal? @db.Decimal(4, 3)
+  evi         Decimal? @db.Decimal(4, 3)
+  cloudCover  Decimal? @db.Decimal(5, 2)
+  biomass     Decimal? @db.Decimal(5, 2)
+
+  imageUrl String?
+
+  createdAt DateTime @default(now())
+
+  @@index([plotId, captureDate(sort: Desc)])
+}
+
+// ============================================
+// ANALYTICS TABLES
+// ============================================
+
+model DailyOrganizationStats {
+  id             String   @id @default(uuid())
+  organizationId String
+  date           DateTime
+
+  policiesCreated   Int     @default(0)
+  payoutsProcessed  Int     @default(0)
+  farmersRegistered Int     @default(0)
+
+  premiumsCollected Decimal @default(0) @db.Decimal(15, 2)
+  feesGenerated     Decimal @default(0) @db.Decimal(15, 2)
+  payoutsAmount     Decimal @default(0) @db.Decimal(15, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, date])
+  @@index([organizationId, date])
+  @@index([date])
+}
+
+model DailyPlatformStats {
+  id   String   @id @default(uuid())
+  date DateTime @unique
+
+  activeOrganizations Int @default(0)
+  totalPolicies       Int @default(0)
+  totalPayoutsCount   Int @default(0)
+
+  totalPremiums       Decimal @default(0) @db.Decimal(15, 2)
+  totalFees           Decimal @default(0) @db.Decimal(15, 2)
+  totalPayoutsAmount  Decimal @default(0) @db.Decimal(15, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+}

@@ -1,12 +1,53 @@
 {
   "name": "microcrop-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "MicroCrop B2B parametric crop insurance infrastructure backend",
+  "type": "module",
+  "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "lint": "eslint src/",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "prisma db seed",
+    "prisma:studio": "prisma studio"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "keywords": [
+    "crop-insurance",
+    "parametric",
+    "blockchain",
+    "b2b"
+  ],
+  "author": "MicroCrop Protocol",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "axios": "^1.13.3",
+    "bcrypt": "^6.0.0",
+    "bull": "^4.16.5",
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.16.0",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.9.2",
+    "joi": "^18.0.2",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.10.1",
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.2",
+    "jest": "^30.2.0",
+    "prisma": "^6.19.2",
+    "supertest": "^7.2.2"
+  }
 }
