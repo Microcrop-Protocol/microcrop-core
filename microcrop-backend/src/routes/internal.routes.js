@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../config/database.js';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
+import { invitationController } from '../controllers/invitation.controller.js';
 
 const router = Router();
 
@@ -63,6 +64,40 @@ router.get('/active-policies', async (_req, res, next) => {
     logger.info(`Internal API: returning ${result.length} active policies`);
 
     res.json({ success: true, policies: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/internal/invitations/cleanup
+ *
+ * Cleans up expired invitations. Called by cron job.
+ */
+router.post('/invitations/cleanup', invitationController.cleanupExpired);
+
+/**
+ * POST /api/internal/policies/expire-check
+ *
+ * Expires overdue policies. Called by cron job.
+ */
+router.post('/policies/expire-check', async (_req, res, next) => {
+  try {
+    const now = new Date();
+
+    const result = await prisma.policy.updateMany({
+      where: {
+        status: 'ACTIVE',
+        endDate: { lt: now },
+      },
+      data: {
+        status: 'EXPIRED',
+      },
+    });
+
+    logger.info(`Internal API: expired ${result.count} overdue policies`);
+
+    res.json({ success: true, data: { expiredCount: result.count } });
   } catch (error) {
     next(error);
   }
