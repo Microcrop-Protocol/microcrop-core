@@ -1,25 +1,46 @@
 import { Router } from 'express';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { authorize } from '../middleware/authorize.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { submitApplicationSchema } from '../validators/kyb.validator.js';
+import { submitApplicationSchema, applicationQuerySchema } from '../validators/kyb.validator.js';
 import { applicationController } from '../controllers/application.controller.js';
-import Joi from 'joi';
 
 const router = Router();
 
-// Public endpoints (no authentication required)
+// ============================================
+// PUBLIC ENDPOINTS
+// ============================================
 
 // Submit a new organization application
 router.post(
-  '/',
+  '/organization',
   validate(submitApplicationSchema),
   applicationController.submit
 );
 
-// Check application status by email
+// ============================================
+// PLATFORM ADMIN ENDPOINTS
+// ============================================
+
+router.use(authenticate, authorize('PLATFORM_ADMIN'));
+
+// List all applications
 router.get(
-  '/status',
-  validate(Joi.object({ email: Joi.string().email().required() }), 'query'),
-  applicationController.getStatus
+  '/organization',
+  validate(applicationQuerySchema, 'query'),
+  applicationController.list
+);
+
+// Get application by ID
+router.get(
+  '/organization/:id',
+  applicationController.getById
+);
+
+// Verify/approve application
+router.post(
+  '/organization/:id/verify',
+  applicationController.approve
 );
 
 export const applicationRouter = router;

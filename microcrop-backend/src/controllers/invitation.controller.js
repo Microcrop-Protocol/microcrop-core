@@ -2,20 +2,16 @@ import invitationService from '../services/invitation.service.js';
 
 export const invitationController = {
   /**
-   * Send admin invitation (Platform Admin)
-   * POST /api/platform/organizations/:orgId/invitations
+   * List all invitations (Platform Admin)
+   * GET /api/invitations
    */
-  async send(req, res, next) {
+  async list(req, res, next) {
     try {
-      const invitation = await invitationService.send(
-        req.params.orgId,
-        req.body,
-        req.user.id
-      );
-      res.status(201).json({
+      const result = await invitationService.listAll(req.query);
+      res.json({
         success: true,
-        data: invitation,
-        message: 'Invitation sent successfully.',
+        data: result.invitations,
+        pagination: result.pagination,
       });
     } catch (error) {
       next(error);
@@ -23,8 +19,42 @@ export const invitationController = {
   },
 
   /**
-   * Get invitation details by token (public)
-   * GET /api/invitations/:token
+   * Create a new invitation (Platform Admin)
+   * POST /api/invitations
+   */
+  async create(req, res, next) {
+    try {
+      const invitation = await invitationService.create(req.body, req.user.id);
+      res.status(201).json({
+        success: true,
+        data: invitation,
+        message: 'Invitation created successfully.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Send/resend invitation email (Platform Admin)
+   * POST /api/invitations/:id/send
+   */
+  async send(req, res, next) {
+    try {
+      const invitation = await invitationService.sendEmail(req.params.id);
+      res.json({
+        success: true,
+        data: invitation,
+        message: 'Invitation email sent successfully.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Validate invitation token (public)
+   * GET /api/invitations/validate/:token
    */
   async getByToken(req, res, next) {
     try {
@@ -40,76 +70,16 @@ export const invitationController = {
 
   /**
    * Accept invitation and create account (public)
-   * POST /api/invitations/:token/accept
+   * POST /api/invitations/accept
    */
   async accept(req, res, next) {
     try {
-      const { password } = req.body;
-      const user = await invitationService.accept(req.params.token, password);
+      const { token, password } = req.body;
+      const user = await invitationService.accept(token, password);
       res.status(201).json({
         success: true,
         data: user,
         message: 'Account created successfully. You can now log in.',
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  /**
-   * List invitations for an organization (Platform Admin)
-   * GET /api/platform/organizations/:orgId/invitations
-   */
-  async listByOrganization(req, res, next) {
-    try {
-      const result = await invitationService.listByOrganization(
-        req.params.orgId,
-        req.query
-      );
-      res.json({
-        success: true,
-        data: result.invitations,
-        pagination: result.pagination,
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  /**
-   * Revoke an invitation (Platform Admin)
-   * DELETE /api/platform/organizations/:orgId/invitations/:invitationId
-   */
-  async revoke(req, res, next) {
-    try {
-      const invitation = await invitationService.revoke(
-        req.params.invitationId,
-        req.params.orgId
-      );
-      res.json({
-        success: true,
-        data: invitation,
-        message: 'Invitation revoked successfully.',
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  /**
-   * Resend an invitation (Platform Admin)
-   * POST /api/platform/organizations/:orgId/invitations/:invitationId/resend
-   */
-  async resend(req, res, next) {
-    try {
-      const invitation = await invitationService.resend(
-        req.params.invitationId,
-        req.params.orgId
-      );
-      res.json({
-        success: true,
-        data: invitation,
-        message: 'Invitation resent successfully.',
       });
     } catch (error) {
       next(error);

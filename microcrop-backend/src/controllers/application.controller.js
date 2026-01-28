@@ -54,11 +54,11 @@ export const applicationController = {
 
   /**
    * Get application by ID (Platform Admin)
-   * GET /api/platform/applications/:applicationId
+   * GET /api/applications/organization/:id
    */
   async getById(req, res, next) {
     try {
-      const application = await applicationService.getById(req.params.applicationId);
+      const application = await applicationService.getById(req.params.id);
       res.json({
         success: true,
         data: application,
@@ -91,19 +91,19 @@ export const applicationController = {
   },
 
   /**
-   * Approve application and create organization (Platform Admin)
-   * POST /api/platform/applications/:applicationId/approve
+   * Verify/Approve application and create organization (Platform Admin)
+   * POST /api/applications/organization/:id/verify
    */
   async approve(req, res, next) {
     try {
       const result = await applicationService.approve(
-        req.params.applicationId,
+        req.params.id,
         req.user.id
       );
       res.json({
         success: true,
         data: result,
-        message: 'Application approved and organization created successfully.',
+        message: 'Application verified and organization created successfully.',
       });
     } catch (error) {
       next(error);

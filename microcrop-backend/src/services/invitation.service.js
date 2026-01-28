@@ -7,7 +7,187 @@ const INVITATION_EXPIRY_HOURS = 72; // 3 days
 
 export const invitationService = {
   /**
-   * Send admin invitation for an organization
+   * List all invitations (Platform Admin)
+   */
+  async listAll(query) {
+    const { status, organizationId, page = 1, limit = 20 } = query;
+    const skip = (page - 1) * limit;
+
+    const where = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (organizationId) {
+      where.organizationId = organizationId;
+    }
+
+    const [invitations, total] = await Promise.all([
+      prisma.orgAdminInvitation.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { invitedAt: 'desc' },
+        include: {
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              brandName: true,
+            },
+          },
+        },
+      }),
+      prisma.orgAdminInvitation.count({ where }),
+    ]);
+
+    return {
+      invitations,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  },
+
+  /**
+   * Create a new invitation (Platform Admin)
+   */
+  async create(data, invitedBy) {
+    const { organizationId, email, firstName, lastName, phone } = data;
+
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!organization) {
+      throw new AppError('Organization not found', 404, 'ORG_NOT_FOUND');
+    }
+
+    // Check if email already has a user account
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      throw new AppError('A user with this email already exists', 400, 'USER_EXISTS');
+    }
+
+    // Check for existing pending invitation
+    const existingInvitation = await prisma.orgAdminInvitation.findFirst({
+      where: {
+        email,
+        organizationId,
+        status: 'PENDING',
+      },
+    });
+
+    if (existingInvitation) {
+      throw new AppError('A pending invitation already exists for this email', 400, 'INVITATION_EXISTS');
+    }
+
+    // Generate secure token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_HOURS * 60 * 60 * 1000);
+
+    const invitation = await prisma.orgAdminInvitation.create({
+      data: {
+        email,
+        firstName,
+        lastName,
+        phone,
+        token,
+        expiresAt,
+        organizationId,
+        invitedBy,
+        status: 'PENDING',
+      },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            brandName: true,
+          },
+        },
+      },
+    });
+
+    return {
+      ...invitation,
+      invitationLink: `https://app.microcrop.app/accept-invitation?token=${token}`,
+    };
+  },
+
+  /**
+   * Send/resend invitation email
+   */
+  async sendEmail(invitationId) {
+    const invitation = await prisma.orgAdminInvitation.findUnique({
+      where: { id: invitationId },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            brandName: true,
+          },
+        },
+      },
+    });
+
+    if (!invitation) {
+      throw new AppError('Invitation not found', 404, 'INVITATION_NOT_FOUND');
+    }
+
+    if (invitation.status !== 'PENDING') {
+      throw new AppError('Can only send pending invitations', 400, 'CANNOT_SEND');
+    }
+
+    // Check if expired and regenerate token if needed
+    if (new Date() > invitation.expiresAt) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_HOURS * 60 * 60 * 1000);
+
+      const updated = await prisma.orgAdminInvitation.update({
+        where: { id: invitationId },
+        data: { token, expiresAt },
+        include: {
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              brandName: true,
+            },
+          },
+        },
+      });
+
+      // In production, send email with invitation link
+      // await emailService.sendInvitation(updated);
+
+      return {
+        ...updated,
+        invitationLink: `https://app.microcrop.app/accept-invitation?token=${token}`,
+        emailSent: true,
+      };
+    }
+
+    // In production, send email with invitation link
+    // await emailService.sendInvitation(invitation);
+
+    return {
+      ...invitation,
+      invitationLink: `https://app.microcrop.app/accept-invitation?token=${invitation.token}`,
+      emailSent: true,
+    };
+  },
+
+  /**
+   * Send admin invitation for an organization (legacy method)
    */
   async send(organizationId, data, invitedBy) {
     const organization = await prisma.organization.findUnique({

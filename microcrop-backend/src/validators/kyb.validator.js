@@ -79,6 +79,7 @@ export const updateKYBStatusSchema = Joi.object({
 
 // Invitation Schemas
 export const sendInvitationSchema = Joi.object({
+  organizationId: Joi.string().uuid().required(),
   email: Joi.string().email().required(),
   firstName: Joi.string().min(1).max(50).required(),
   lastName: Joi.string().min(1).max(50).required(),
@@ -109,6 +110,7 @@ export const applicationQuerySchema = Joi.object({
 
 export const invitationQuerySchema = Joi.object({
   status: Joi.string().valid('PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED').optional(),
+  organizationId: Joi.string().uuid().optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
 });
