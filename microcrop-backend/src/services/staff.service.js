@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import prisma from '../config/database.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
