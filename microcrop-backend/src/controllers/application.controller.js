@@ -1,13 +1,44 @@
 import applicationService from '../services/application.service.js';
+import { getFileUrl } from '../middleware/upload.middleware.js';
 
 export const applicationController = {
   /**
-   * Submit a new organization application (public)
-   * POST /api/applications
+   * Submit a new organization application with documents (public)
+   * POST /api/applications/organization (multipart/form-data)
    */
   async submit(req, res, next) {
     try {
-      const application = await applicationService.submit(req.body);
+      // Extract form fields from body
+      const formData = {
+        name: req.body.name,
+        registrationNumber: req.body.registrationNumber,
+        type: req.body.type,
+        contactFirstName: req.body.contactFirstName,
+        contactLastName: req.body.contactLastName,
+        contactEmail: req.body.contactEmail,
+        contactPhone: req.body.contactPhone,
+        county: req.body.county,
+        estimatedFarmers: req.body.estimatedFarmers ? parseInt(req.body.estimatedFarmers, 10) : undefined,
+        website: req.body.website,
+        description: req.body.description,
+      };
+
+      // Extract uploaded files
+      const files = {};
+      if (req.files) {
+        if (req.files.businessRegistrationCert?.[0]) {
+          const file = req.files.businessRegistrationCert[0];
+          files.businessRegistrationCertUrl = getFileUrl(file.filename);
+          files.businessRegistrationCertName = file.originalname;
+        }
+        if (req.files.taxPinCert?.[0]) {
+          const file = req.files.taxPinCert[0];
+          files.taxPinCertUrl = getFileUrl(file.filename);
+          files.taxPinCertName = file.originalname;
+        }
+      }
+
+      const application = await applicationService.submit({ ...formData, ...files });
       res.status(201).json({
         success: true,
         data: application,

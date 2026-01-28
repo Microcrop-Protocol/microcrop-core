@@ -38,6 +38,11 @@ export const applicationService = {
         estimatedFarmers: data.estimatedFarmers,
         website: data.website,
         description: data.description,
+        // Documents
+        businessRegistrationCertUrl: data.businessRegistrationCertUrl,
+        businessRegistrationCertName: data.businessRegistrationCertName,
+        taxPinCertUrl: data.taxPinCertUrl,
+        taxPinCertName: data.taxPinCertName,
         status: 'PENDING_REVIEW',
       },
     });
@@ -197,9 +202,6 @@ export const applicationService = {
   async approve(applicationId, reviewedBy) {
     const application = await prisma.organizationApplication.findUnique({
       where: { id: applicationId },
-      include: {
-        kybVerification: true,
-      },
     });
 
     if (!application) {
@@ -210,8 +212,8 @@ export const applicationService = {
       throw new AppError('Application is already approved', 400, 'ALREADY_APPROVED');
     }
 
-    if (application.kybVerification?.status !== 'VERIFIED') {
-      throw new AppError('KYB verification must be completed before approval', 400, 'KYB_NOT_VERIFIED');
+    if (application.status === 'REJECTED') {
+      throw new AppError('Cannot approve a rejected application', 400, 'APPLICATION_REJECTED');
     }
 
     // Generate API credentials

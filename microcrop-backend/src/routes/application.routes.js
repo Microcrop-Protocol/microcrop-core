@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/authorize.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { submitApplicationSchema, applicationQuerySchema } from '../validators/kyb.validator.js';
+import { applicationDocuments, handleUploadError } from '../middleware/upload.middleware.js';
+import { applicationQuerySchema } from '../validators/kyb.validator.js';
 import { applicationController } from '../controllers/application.controller.js';
 
 const router = Router();
@@ -11,10 +12,11 @@ const router = Router();
 // PUBLIC ENDPOINTS
 // ============================================
 
-// Submit a new organization application
+// Submit a new organization application with documents (multipart/form-data)
 router.post(
   '/organization',
-  validate(submitApplicationSchema),
+  applicationDocuments,
+  handleUploadError,
   applicationController.submit
 );
 

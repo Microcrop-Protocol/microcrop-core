@@ -637,6 +637,12 @@ model OrganizationApplication {
   website          String?
   description      String?
 
+  // Documents (stored as URLs/paths)
+  businessRegistrationCertUrl String?
+  businessRegistrationCertName String?
+  taxPinCertUrl               String?
+  taxPinCertName              String?
+
   // Status
   status ApplicationStatus @default(PENDING_REVIEW)
 

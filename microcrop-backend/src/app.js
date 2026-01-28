@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
+import path from 'path';
 import { stream } from './utils/logger.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
@@ -40,6 +41,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined', { stream }));
 app.use(apiLimiter);
+
+// Static file serving for uploads (in production, use S3/GCS)
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Health check
 app.get('/health', (_req, res) => {
