@@ -22,6 +22,9 @@ import { staffRouter } from './routes/staff.routes.js';
 import { dashboardPlatformRouter } from './routes/dashboard.platform.routes.js';
 import { dashboardOrgRouter } from './routes/dashboard.org.routes.js';
 import { exportRouter } from './routes/export.routes.js';
+import { applicationRouter } from './routes/application.routes.js';
+import { invitationRouter } from './routes/invitation.routes.js';
+import { kybRouter } from './routes/kyb.routes.js';
 
 const app = express();
 
@@ -59,6 +62,9 @@ app.use('/api/staff', staffRouter);
 app.use('/api/dashboard/platform', dashboardPlatformRouter);
 app.use('/api/dashboard/org', dashboardOrgRouter);
 app.use('/api/export', exportRouter);
+app.use('/api/applications', applicationRouter);
+app.use('/api/invitations', invitationRouter);
+app.use('/api/kyb', kybRouter);
 
 // 404 handler
 app.use((_req, res) => {
