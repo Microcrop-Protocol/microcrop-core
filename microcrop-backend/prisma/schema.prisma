@@ -41,6 +41,10 @@ model Organization {
   county  String?
   country String @default("Kenya")
 
+  // KYB & Onboarding
+  kybStatus      OrgKYBStatus   @default(NOT_STARTED)
+  onboardingStep OnboardingStep @default(APPLICATION)
+
   // Usage tracking (analytics, NOT billing)
   totalPoliciesCreated   Int      @default(0)
   totalPremiumsCollected Decimal  @default(0) @db.Decimal(15, 2)
@@ -56,6 +60,8 @@ model Organization {
   transactions Transaction[]
   users        User[]
   platformFees PlatformFee[]
+  application  OrganizationApplication?
+  invitations  OrgAdminInvitation[]
 
   // Status
   isActive  Boolean  @default(true)
@@ -66,6 +72,8 @@ model Organization {
   @@index([isActive])
   @@index([type])
   @@index([country, county])
+  @@index([kybStatus])
+  @@index([onboardingStep])
 }
 
 enum OrgType {
@@ -75,6 +83,22 @@ enum OrgType {
   INSURANCE_COMPANY
   GOVERNMENT
   OTHER
+}
+
+enum OrgKYBStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum OnboardingStep {
+  APPLICATION
+  KYB_VERIFICATION
+  POOL_DEPLOYMENT
+  ADMIN_SETUP
+  COMPLETED
 }
 
 // ============================================
@@ -587,4 +611,174 @@ model DailyPlatformStats {
   updatedAt DateTime @updatedAt
 
   @@index([date])
+}
+
+// ============================================
+// ORGANIZATION KYB & ONBOARDING
+// ============================================
+
+model OrganizationApplication {
+  id String @id @default(uuid())
+
+  // Organization details
+  name               String
+  registrationNumber String
+  type               OrgType
+
+  // Contact person
+  contactFirstName String
+  contactLastName  String
+  contactEmail     String   @unique
+  contactPhone     String
+
+  // Optional details
+  county           String?
+  estimatedFarmers Int?
+  website          String?
+  description      String?
+
+  // Status
+  status ApplicationStatus @default(PENDING_REVIEW)
+
+  // Review
+  reviewedBy     String?
+  reviewedAt     DateTime?
+  rejectionReason String?
+
+  // Relations
+  kybVerification KYBVerification?
+  organization    Organization?    @relation(fields: [organizationId], references: [id])
+  organizationId  String?          @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([contactEmail])
+  @@index([createdAt])
+}
+
+enum ApplicationStatus {
+  PENDING_REVIEW
+  UNDER_REVIEW
+  KYB_REQUIRED
+  KYB_IN_PROGRESS
+  KYB_SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model KYBVerification {
+  id String @id @default(uuid())
+
+  // Link to application
+  applicationId String                  @unique
+  application   OrganizationApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  // Verification status
+  status VerificationStatus @default(PENDING)
+
+  // Document checklist
+  businessRegistrationVerified Boolean @default(false)
+  taxCertificateVerified       Boolean @default(false)
+  directorIdVerified           Boolean @default(false)
+  proofOfAddressVerified       Boolean @default(false)
+  bankStatementVerified        Boolean @default(false)
+
+  // Review notes
+  verifierNotes String?
+  verifiedBy    String?
+  verifiedAt    DateTime?
+
+  // Relations
+  documents KYBDocument[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([applicationId])
+}
+
+enum VerificationStatus {
+  PENDING
+  IN_PROGRESS
+  DOCUMENTS_REQUIRED
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+model KYBDocument {
+  id String @id @default(uuid())
+
+  // Link to verification
+  kybVerificationId String
+  kybVerification   KYBVerification @relation(fields: [kybVerificationId], references: [id], onDelete: Cascade)
+
+  // Document details
+  documentType KYBDocumentType
+  fileName     String
+  fileUrl      String
+  fileSize     Int
+  mimeType     String
+
+  // Verification
+  isVerified   Boolean   @default(false)
+  verifiedBy   String?
+  verifiedAt   DateTime?
+  rejectionReason String?
+
+  uploadedAt DateTime @default(now())
+
+  @@index([kybVerificationId])
+  @@index([documentType])
+}
+
+enum KYBDocumentType {
+  BUSINESS_REGISTRATION
+  TAX_CERTIFICATE
+  DIRECTOR_ID
+  PROOF_OF_ADDRESS
+  BANK_STATEMENT
+  OTHER
+}
+
+model OrgAdminInvitation {
+  id String @id @default(uuid())
+
+  // Invitation details
+  email     String
+  firstName String
+  lastName  String
+  phone     String?
+
+  // Token for secure signup
+  token     String   @unique
+  expiresAt DateTime
+
+  // Link to organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Status
+  status InvitationStatus @default(PENDING)
+  usedAt DateTime?
+
+  // Audit
+  invitedBy   String
+  invitedAt   DateTime @default(now())
+
+  @@index([token])
+  @@index([email])
+  @@index([organizationId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
 }
