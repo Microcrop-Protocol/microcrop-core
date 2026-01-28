@@ -15,7 +15,12 @@ export function validate(schema, property = 'body') {
       return next(new ValidationError('Validation failed', details));
     }
 
-    req[property] = value;
+    // req.query is read-only in Express, so merge validated values instead
+    if (property === 'query') {
+      Object.assign(req.query, value);
+    } else {
+      req[property] = value;
+    }
     next();
   };
 }
