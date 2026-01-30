@@ -42,15 +42,32 @@ export const env = {
   contractPolicyManager: optional('CONTRACT_POLICY_MANAGER', ''),
   contractPayoutReceiver: optional('CONTRACT_PAYOUT_RECEIVER', ''),
 
-  // Dev contracts
+  // Dev contracts (Base Sepolia)
   baseSepoliaRpcUrl: optional('BASE_SEPOLIA_RPC_URL', ''),
   contractRiskPoolFactoryDev: optional('CONTRACT_RISK_POOL_FACTORY_DEV', ''),
   contractPlatformTreasuryDev: optional('CONTRACT_PLATFORM_TREASURY_DEV', ''),
+  contractPolicyManagerDev: optional('CONTRACT_POLICY_MANAGER_DEV', ''),
+  contractPayoutReceiverDev: optional('CONTRACT_PAYOUT_RECEIVER_DEV', ''),
+  contractUsdcDev: optional('CONTRACT_USDC_DEV', ''),
 
-  // Swypt
+  // Backend wallet (for on-chain operations)
+  backendWallet: optional('BACKEND_WALLET', ''),
+
+  // Pretium (Primary payment provider)
+  pretiumApiUrl: optional('PRETIUM_API_URL', 'https://api.pretium.africa'),
+  pretiumApiKey: optional('PRETIUM_API_KEY', ''),
+  pretiumEnabled: optional('PRETIUM_ENABLED', 'true') === 'true',
+
+  // Swypt (Fallback payment provider)
   swyptApiUrl: optional('SWYPT_API_URL', 'https://pool.swypt.io/api'),
   swyptApiKey: optional('SWYPT_API_KEY', ''),
   swyptApiSecret: optional('SWYPT_API_SECRET', ''),
+  swyptProjectName: optional('SWYPT_PROJECT_NAME', 'microcrop'),
+  swyptContractAddress: optional('SWYPT_CONTRACT_ADDRESS', ''),
+  swyptEnabled: optional('SWYPT_ENABLED', 'true') === 'true',
+
+  // Payment provider preference (pretium or swypt)
+  primaryPaymentProvider: optional('PRIMARY_PAYMENT_PROVIDER', 'pretium'),
 
   // Africa's Talking
   atUsername: optional('AT_USERNAME', ''),
