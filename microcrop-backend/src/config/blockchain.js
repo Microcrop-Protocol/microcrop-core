@@ -18,7 +18,7 @@ function loadABI(filename) {
   }
 }
 
-// Provider
+// Provider - use Base Sepolia for dev, Base mainnet for production
 const rpcUrl = env.isDev && env.baseSepoliaRpcUrl
   ? env.baseSepoliaRpcUrl
   : env.baseRpcUrl;
@@ -55,16 +55,53 @@ function createContract(address, abi, signerOrProvider) {
   return new ethers.Contract(address, abi, signerOrProvider || provider);
 }
 
-const factoryAddr = env.isDev ? env.contractRiskPoolFactoryDev : env.contractRiskPoolFactory;
-const treasuryAddr = env.isDev ? env.contractPlatformTreasuryDev : env.contractPlatformTreasury;
+// Get contract addresses based on environment
+const factoryAddr = env.isDev
+  ? env.contractRiskPoolFactoryDev
+  : env.contractRiskPoolFactory;
 
+const treasuryAddr = env.isDev
+  ? env.contractPlatformTreasuryDev
+  : env.contractPlatformTreasury;
+
+const policyManagerAddr = env.isDev
+  ? env.contractPolicyManagerDev
+  : env.contractPolicyManager;
+
+const payoutReceiverAddr = env.isDev
+  ? env.contractPayoutReceiverDev
+  : env.contractPayoutReceiver;
+
+// Create contract instances
 export const riskPoolFactory = createContract(factoryAddr, RiskPoolFactoryABI, wallet);
 export const platformTreasury = createContract(treasuryAddr, PlatformTreasuryABI, provider);
-export const policyManager = createContract(env.contractPolicyManager, PolicyManagerABI, wallet);
-export const payoutReceiver = createContract(env.contractPayoutReceiver, PayoutReceiverABI, provider);
+export const policyManager = createContract(policyManagerAddr, PolicyManagerABI, wallet);
+export const payoutReceiver = createContract(payoutReceiverAddr, PayoutReceiverABI, provider);
 
+// Log contract configuration
+if (env.isDev) {
+  logger.info('Blockchain config (dev mode):', {
+    rpcUrl,
+    factoryAddr,
+    treasuryAddr,
+    policyManagerAddr,
+    payoutReceiverAddr,
+    walletConfigured: !!wallet,
+  });
+}
+
+/**
+ * Get RiskPool contract instance for a specific pool address
+ */
 export function getRiskPoolContract(address) {
   return new ethers.Contract(address, RiskPoolABI, wallet || provider);
+}
+
+/**
+ * Get USDC contract address based on environment
+ */
+export function getUsdcAddress() {
+  return env.isDev ? env.contractUsdcDev : env.contractUsdc || env.contractUsdcDev;
 }
 
 export { ethers };
