@@ -1,22 +1,37 @@
 import prisma from '../config/database.js';
-import swyptService from './swypt.service.js';
+import paymentProviderService, { PROVIDERS } from './payment-provider.service.js';
+import { createPolicyOnChain } from '../blockchain/writers/policy.writer.js';
+import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 
+// Get USDC address based on environment
+function getUsdcAddress() {
+  return env.isDev ? env.contractUsdcDev : env.contractUsdc || env.contractUsdcDev;
+}
+
 const paymentService = {
+  /**
+   * Get conversion quote for premium payment
+   */
   async getConversionQuote(data) {
-    const quote = await swyptService.getQuote(
-      data.fromCurrency,
-      data.toCurrency,
-      data.amount
+    const quote = await paymentProviderService.getOnrampQuote(
+      data.amount,
+      data.fromCurrency || 'KES',
+      data.toCurrency || 'USDC'
     );
     return quote;
   },
 
+  /**
+   * Initiate premium payment via M-Pesa
+   * Uses Pretium as primary provider, Swypt as fallback
+   */
   async initiatePremiumPayment(organizationId, data) {
     const policy = await prisma.policy.findFirst({
       where: { id: data.reference, organizationId },
+      include: { organization: true },
     });
 
     if (!policy) {
@@ -27,8 +42,15 @@ const paymentService = {
       throw new ValidationError(`Policy is not in PENDING status. Current: ${policy.status}`);
     }
 
-    const reference = uuidv4();
+    if (!policy.organization.poolAddress) {
+      throw new ValidationError('Organization does not have a deployed risk pool');
+    }
 
+    const reference = uuidv4();
+    const poolAddress = policy.organization.poolAddress;
+    const usdcAddress = getUsdcAddress();
+
+    // Create transaction record
     const transaction = await prisma.transaction.create({
       data: {
         reference,
@@ -43,29 +65,55 @@ const paymentService = {
       },
     });
 
-    const mpesaResult = await swyptService.initiateMpesaPayment(
+    // Initiate M-Pesa payment via unified provider (Pretium first, Swypt fallback)
+    const paymentResult = await paymentProviderService.initiateOnramp(
       data.phoneNumber,
       data.amount,
+      poolAddress,
+      usdcAddress,
       reference
     );
 
+    // Update transaction with provider info
     await prisma.transaction.update({
       where: { id: transaction.id },
       data: {
         metadata: {
-          checkoutRequestId: mpesaResult.checkoutRequestId,
+          provider: paymentResult.provider,
+          orderId: paymentResult.orderId,
+          checkoutRequestId: paymentResult.orderId,
         },
       },
+    });
+
+    // Store order ID on policy for tracking
+    await prisma.policy.update({
+      where: { id: data.reference },
+      data: {
+        swyptOrderId: paymentResult.orderId, // Reusing field for any provider's order ID
+      },
+    });
+
+    logger.info('Premium payment initiated', {
+      transactionId: transaction.id,
+      provider: paymentResult.provider,
+      orderId: paymentResult.orderId,
+      policyId: data.reference,
     });
 
     return {
       transactionId: transaction.id,
       reference,
+      orderId: paymentResult.orderId,
+      provider: paymentResult.provider,
       status: 'PENDING',
       instructions: 'Check your phone for M-Pesa prompt',
     };
   },
 
+  /**
+   * Check payment status
+   */
   async checkPaymentStatus(organizationId, reference) {
     const transaction = await prisma.transaction.findFirst({
       where: { reference, organizationId },
@@ -75,23 +123,63 @@ const paymentService = {
       throw new NotFoundError('Transaction not found');
     }
 
+    // Check provider status if we have an order ID and payment is pending
+    const orderId = transaction.metadata?.orderId;
+    const provider = transaction.metadata?.provider;
+
+    if (orderId && transaction.status === 'PENDING') {
+      try {
+        const providerStatus = await paymentProviderService.checkOnrampStatus(orderId, provider);
+
+        // Update transaction if status changed to success
+        if (
+          (providerStatus.status === 'SUCCESS' || providerStatus.status === 'COMPLETED') &&
+          transaction.status !== 'COMPLETED'
+        ) {
+          await this.handlePaymentCallback({
+            reference: transaction.reference,
+            checkoutRequestId: orderId,
+            status: 'SUCCESS',
+            mpesaRef: providerStatus.mpesaRef,
+            provider: provider,
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to check provider status', {
+          error: error.message,
+          orderId,
+          provider,
+        });
+      }
+    }
+
+    // Reload transaction to get updated status
+    const updatedTransaction = await prisma.transaction.findFirst({
+      where: { reference, organizationId },
+    });
+
     return {
-      id: transaction.id,
-      reference: transaction.reference,
-      type: transaction.type,
-      status: transaction.status,
-      amount: transaction.amount,
-      currency: transaction.currency,
-      completedAt: transaction.completedAt,
-      createdAt: transaction.createdAt,
+      id: updatedTransaction.id,
+      reference: updatedTransaction.reference,
+      type: updatedTransaction.type,
+      status: updatedTransaction.status,
+      amount: updatedTransaction.amount,
+      currency: updatedTransaction.currency,
+      provider: updatedTransaction.metadata?.provider,
+      completedAt: updatedTransaction.completedAt,
+      createdAt: updatedTransaction.createdAt,
     };
   },
 
+  /**
+   * Handle payment callback/webhook from provider
+   */
   async handlePaymentCallback(webhookData) {
     const transaction = await prisma.transaction.findFirst({
       where: {
         OR: [
           { reference: webhookData.reference },
+          { metadata: { path: ['orderId'], equals: webhookData.checkoutRequestId } },
           { metadata: { path: ['checkoutRequestId'], equals: webhookData.checkoutRequestId } },
         ],
       },
@@ -105,7 +193,9 @@ const paymentService = {
       return;
     }
 
-    if (webhookData.status === 'SUCCESS') {
+    const provider = webhookData.provider || transaction.metadata?.provider;
+
+    if (webhookData.status === 'SUCCESS' || webhookData.status === 'COMPLETED') {
       await prisma.transaction.update({
         where: { id: transaction.id },
         data: {
@@ -116,19 +206,97 @@ const paymentService = {
       });
 
       if (transaction.policyId) {
-        await prisma.policy.update({
+        // Get policy with organization and farmer
+        const policy = await prisma.policy.findUnique({
           where: { id: transaction.policyId },
-          data: {
-            status: 'ACTIVE',
-            premiumPaid: true,
-            premiumPaidAt: new Date(),
-          },
+          include: { organization: true, farmer: true },
         });
 
-        logger.info('Policy activated via payment callback', {
-          policyId: transaction.policyId,
-          transactionId: transaction.id,
-        });
+        if (!policy) {
+          logger.error('Policy not found for transaction', { policyId: transaction.policyId });
+          return;
+        }
+
+        if (!policy.organization.poolAddress) {
+          logger.error('Organization has no pool address', {
+            organizationId: policy.organizationId,
+            policyId: policy.id,
+          });
+          return;
+        }
+
+        try {
+          // Create policy on-chain
+          const backendWallet = env.backendWallet;
+          if (!backendWallet) {
+            logger.error('Backend wallet not configured - cannot create policy on-chain');
+            await prisma.policy.update({
+              where: { id: transaction.policyId },
+              data: {
+                status: 'ACTIVE',
+                premiumPaid: true,
+                premiumPaidAt: new Date(),
+                premiumTxHash: webhookData.mpesaRef,
+              },
+            });
+            return;
+          }
+
+          const durationSeconds = policy.durationDays * 24 * 60 * 60;
+
+          logger.info('Creating policy on-chain', {
+            policyId: policy.id,
+            poolAddress: policy.organization.poolAddress,
+            sumInsured: policy.sumInsured,
+            premium: policy.premium,
+            durationSeconds,
+            provider,
+          });
+
+          const { txHash, blockNumber } = await createPolicyOnChain(
+            policy.organization.poolAddress,
+            backendWallet,
+            Number(policy.sumInsured),
+            Number(policy.premium),
+            durationSeconds
+          );
+
+          // Update policy with on-chain data
+          await prisma.policy.update({
+            where: { id: transaction.policyId },
+            data: {
+              status: 'ACTIVE',
+              premiumPaid: true,
+              premiumPaidAt: new Date(),
+              premiumTxHash: webhookData.mpesaRef,
+              txHash,
+              blockNumber: BigInt(blockNumber),
+            },
+          });
+
+          logger.info('Policy activated on-chain', {
+            policyId: transaction.policyId,
+            txHash,
+            blockNumber,
+            provider,
+          });
+        } catch (error) {
+          logger.error('Failed to create policy on-chain', {
+            policyId: transaction.policyId,
+            error: error.message,
+          });
+
+          // Mark policy as paid but flag the on-chain failure
+          await prisma.policy.update({
+            where: { id: transaction.policyId },
+            data: {
+              status: 'ACTIVE',
+              premiumPaid: true,
+              premiumPaidAt: new Date(),
+              premiumTxHash: webhookData.mpesaRef,
+            },
+          });
+        }
       }
     } else if (webhookData.status === 'FAILED') {
       await prisma.transaction.update({
@@ -142,8 +310,16 @@ const paymentService = {
       logger.info('Payment failed', {
         transactionId: transaction.id,
         reason: webhookData.reason,
+        provider,
       });
     }
+  },
+
+  /**
+   * Get active payment provider info
+   */
+  async getProviderInfo() {
+    return paymentProviderService.getAccountInfo();
   },
 };
 
