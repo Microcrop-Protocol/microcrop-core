@@ -7,7 +7,7 @@ const activeListeners = [];
 export async function start() {
   const organizations = await prisma.organization.findMany({
     where: {
-      status: 'ACTIVE',
+      isActive: true,
       poolAddress: { not: null },
     },
   });
@@ -18,61 +18,100 @@ export async function start() {
 
       riskPool.on('PolicyCreated', async (policyId, orgAddress, premium, platformFee, eventObj) => {
         try {
+          const txHash = eventObj.log.transactionHash;
+          const blockNumber = eventObj.log.blockNumber;
+
           logger.info('PolicyCreated event received', {
             policyId: policyId.toString(),
             organization: orgAddress,
             premium: premium.toString(),
             platformFee: platformFee.toString(),
+            txHash,
           });
 
-          const policy = await prisma.policy.findFirst({
+          // First try to find policy by txHash (most reliable)
+          let policy = await prisma.policy.findFirst({
             where: {
               organizationId: org.id,
-              status: 'PENDING',
+              txHash: txHash,
             },
-            orderBy: { createdAt: 'desc' },
           });
 
+          // If not found by txHash, try finding ACTIVE policy without onChainPolicyId
+          // (policy was marked ACTIVE by payment callback but event hasn't been processed yet)
           if (!policy) {
-            logger.warn('No pending policy found for PolicyCreated event', {
+            policy = await prisma.policy.findFirst({
+              where: {
+                organizationId: org.id,
+                status: 'ACTIVE',
+                premiumPaid: true,
+                onChainPolicyId: null,
+                txHash: null,
+              },
+              orderBy: { premiumPaidAt: 'desc' },
+            });
+          }
+
+          // Fall back to most recent PENDING policy (legacy behavior)
+          if (!policy) {
+            policy = await prisma.policy.findFirst({
+              where: {
+                organizationId: org.id,
+                status: 'PENDING',
+              },
+              orderBy: { createdAt: 'desc' },
+            });
+          }
+
+          if (!policy) {
+            logger.warn('No policy found for PolicyCreated event', {
               organizationId: org.id,
               policyId: policyId.toString(),
+              txHash,
             });
             return;
           }
 
+          // Update policy with on-chain data
           await prisma.policy.update({
             where: { id: policy.id },
             data: {
               onChainPolicyId: policyId.toString(),
+              policyId: policyId.toString(),
               status: 'ACTIVE',
-              txHash: eventObj.log.transactionHash,
-              blockNumber: BigInt(eventObj.log.blockNumber),
+              txHash: txHash,
+              blockNumber: BigInt(blockNumber),
             },
           });
 
+          // Record platform fee
           await prisma.platformFee.create({
             data: {
               organizationId: org.id,
               policyId: policy.id,
-              amount: parseFloat(platformFee.toString()),
-              txHash: eventObj.log.transactionHash,
-              blockNumber: BigInt(eventObj.log.blockNumber),
+              poolAddress: org.poolAddress,
+              premium: parseFloat(premium.toString()) / 1e6, // Convert from wei to USDC
+              feeAmount: parseFloat(platformFee.toString()) / 1e6,
+              feePercent: 5, // Platform fee percentage
+              txHash: txHash,
+              blockNumber: BigInt(blockNumber),
             },
           });
 
+          // Update organization stats
           await prisma.organization.update({
             where: { id: org.id },
             data: {
-              totalPolicies: { increment: 1 },
-              totalPremiums: { increment: parseFloat(premium.toString()) },
+              totalPoliciesCreated: { increment: 1 },
+              totalPremiumsCollected: { increment: parseFloat(premium.toString()) / 1e6 },
+              lastPolicyCreatedAt: new Date(),
             },
           });
 
           logger.info('Policy activated on-chain', {
             policyId: policy.id,
             onChainPolicyId: policyId.toString(),
-            txHash: eventObj.log.transactionHash,
+            txHash,
           });
         } catch (error) {
           logger.error('Error handling PolicyCreated event', { error: error.message });
