@@ -47,6 +47,8 @@ interface ActivePolicy {
   plotLongitude: number;
   cropType: string;
   onChainPolicyId: string;
+  sumInsured: number;
+  farmerWallet: string | null;
 }
 
 interface WeatherData {
