@@ -43,11 +43,17 @@ router.get('/active-policies', async (_req, res, next) => {
         id: true,
         policyId: true,
         policyNumber: true,
+        sumInsured: true,
         plot: {
           select: {
             latitude: true,
             longitude: true,
             cropType: true,
+          },
+        },
+        farmer: {
+          select: {
+            walletAddress: true,
           },
         },
       },
@@ -59,6 +65,8 @@ router.get('/active-policies', async (_req, res, next) => {
       plotLatitude: parseFloat(p.plot.latitude),
       plotLongitude: parseFloat(p.plot.longitude),
       cropType: p.plot.cropType,
+      sumInsured: parseFloat(p.sumInsured),
+      farmerWallet: p.farmer?.walletAddress || null,
     }));
 
     logger.info(`Internal API: returning ${result.length} active policies`);
