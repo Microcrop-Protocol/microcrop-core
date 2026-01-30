@@ -252,8 +252,9 @@ model Policy {
   id String @id @default(uuid())
 
   // Blockchain reference
-  policyId     String? @unique
-  policyNumber String  @unique
+  policyId        String? @unique
+  onChainPolicyId String?
+  policyNumber    String  @unique
 
   // Multi-tenant
   organizationId String
@@ -289,6 +290,8 @@ model Policy {
   premiumPaid   Boolean   @default(false)
   premiumTxHash String?
   premiumPaidAt DateTime?
+  premiumKES    Decimal?  @db.Decimal(12, 2)
+  swyptOrderId  String?
 
   // Cancellation
   cancelledAt        DateTime?
@@ -330,19 +333,29 @@ enum PolicyStatus {
 model DamageAssessment {
   id String @id @default(uuid())
 
-  policyId String
-  policy   Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policyId       String
+  policy         Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  organizationId String?
 
-  // Damage calculation
-  weatherDamage   Decimal @db.Decimal(5, 2)
-  satelliteDamage Decimal @db.Decimal(5, 2)
-  combinedDamage  Decimal @db.Decimal(5, 2)
+  // Damage calculation (from CRE breakdown)
+  weatherDamage   Decimal? @db.Decimal(5, 2)
+  satelliteDamage Decimal? @db.Decimal(5, 2)
+  combinedDamage  Decimal? @db.Decimal(5, 2)
+
+  // On-chain damage report (simplified from PayoutReceiver event)
+  damagePercent Int?
+  proof         String?
+  source        DamageSource @default(ON_CHAIN)
+
+  // Blockchain tracking
+  txHash      String?
+  blockNumber BigInt?
 
   // Trigger
-  triggered   Boolean  @default(false)
-  triggerDate DateTime
+  triggered   Boolean   @default(false)
+  triggerDate DateTime?
 
-  // Blockchain proof
+  // Legacy fields
   proofHash   String?
   submittedBy String?
 
@@ -351,6 +364,13 @@ model DamageAssessment {
   @@index([policyId])
   @@index([triggerDate])
   @@index([triggered])
+  @@index([organizationId])
+}
+
+enum DamageSource {
+  ON_CHAIN
+  MANUAL
+  CRE
 }
 
 // ============================================
@@ -367,6 +387,7 @@ model Payout {
   // Payout details
   policyId String
   policy   Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  farmerId String?
 
   // Amount
   amountUSDC    Decimal  @db.Decimal(12, 2)
@@ -382,8 +403,9 @@ model Payout {
   blockNumber BigInt?
 
   // M-Pesa delivery
-  mpesaRef   String?
-  mpesaPhone String?
+  mpesaRef     String?
+  mpesaPhone   String?
+  swyptOrderId String?
 
   // Timing
   initiatedAt  DateTime  @default(now())
