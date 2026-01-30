@@ -1,11 +1,11 @@
 {
   "schedule": "0 0 * * *",
   "backendApiUrl": "https://api.microcrop.io",
-  "weatherXmApiUrl": "https://api.weatherxm.com/v1",
+  "weatherXmApiUrl": "https://pro.weatherxm.com/api/v1",
   "satelliteProvider": "sentinel",
   "planetApiUrl": "https://api.planet.com/data/v1",
   "sentinelApiUrl": "https://sh.dataspace.copernicus.eu/api/v1",
-  "payoutReceiverAddress": "0x0000000000000000000000000000000000000000",
+  "payoutReceiverAddress": "0x1151621ed6A9830E36fd6b55878a775c824fabd0",
   "chainSelectorName": "ethereum-mainnet-base-1",
   "gasLimit": "500000",
   "damageThreshold": 30,
