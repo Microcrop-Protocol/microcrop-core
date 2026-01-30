@@ -51,10 +51,21 @@ export function getDurationFactor(days) {
   return DURATION_FACTORS[365];
 }
 
+// Damage thresholds (percentage 0-100, not basis points)
 export const DAMAGE_THRESHOLD = 30;
 
+// Token decimals
 export const USDC_DECIMALS = 6;
 
+// Sum insured limits (in USDC)
+export const MIN_SUM_INSURED = 1000;      // Minimum $1,000 USDC
+export const MAX_SUM_INSURED = 1000000;   // Maximum $1,000,000 USDC
+
+// Policy duration limits (in days)
+export const MIN_DURATION_DAYS = 30;
+export const MAX_DURATION_DAYS = 365;
+
+// Retry configuration
 export const MAX_RETRY_ATTEMPTS = 3;
 
 export const PAYOUT_QUEUE_NAME = 'payout-processing';
