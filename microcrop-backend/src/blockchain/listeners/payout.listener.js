@@ -62,6 +62,7 @@ export async function start() {
         await addPayoutJob({
           payoutId: payout.id,
           policyId: policy.id,
+          organizationId: policy.organizationId,
           farmerId: policy.farmerId,
           phoneNumber: policy.farmer.phoneNumber,
           amountUSDC: payoutAmount,
