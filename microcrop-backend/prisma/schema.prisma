@@ -316,6 +316,7 @@ enum CoverageType {
   DROUGHT
   FLOOD
   BOTH
+  COMPREHENSIVE
 }
 
 enum PolicyStatus {
@@ -457,9 +458,11 @@ model Transaction {
   reference String @unique
 
   // Payment details
-  phoneNumber String?
-  description String?
-  metadata    Json?
+  phoneNumber   String?
+  description   String?
+  externalRef   String?
+  failureReason String?
+  metadata      Json?
 
   createdAt   DateTime  @default(now())
   completedAt DateTime?
