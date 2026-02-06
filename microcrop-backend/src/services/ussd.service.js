@@ -1,7 +1,10 @@
 import prisma from '../config/database.js';
 import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
-import { normalizePhone } from '../utils/helpers.js';
+import { normalizePhone, generatePolicyNumber } from '../utils/helpers.js';
+import { getDurationFactor, BASE_PREMIUM_RATE, PLATFORM_FEE_PERCENT, CROP_FACTORS } from '../utils/constants.js';
+import paymentService from './payment.service.js';
+import { addNotificationJob } from '../workers/notification.worker.js';
 
 const SESSION_TTL = 600; // 10 minutes
 
@@ -61,6 +64,12 @@ const ussdService = {
         case 'MY_ACCOUNT':
           response = await this._handleMyAccount(organization, normalizedPhone);
           break;
+        case 'PAY_PENDING_LIST':
+          response = await this._handlePayPendingList(session, currentInput, organization, normalizedPhone);
+          break;
+        case 'PAY_PENDING_CONFIRM':
+          response = await this._handlePayPendingConfirm(session, currentInput, organization, normalizedPhone);
+          break;
         default:
           response = 'END An error occurred. Please try again.';
       }
@@ -78,9 +87,13 @@ const ussdService = {
     }
   },
 
+  // ── Main Menu ──────────────────────────────────────────────────────────
+
   async _handleMainMenu(session, input, organization) {
+    const menu = `CON Welcome to ${organization.brandName}\n1. Register\n2. Buy Insurance\n3. Check Policy\n4. My Account\n5. Pay Pending`;
+
     if (!input) {
-      return `CON Welcome to ${organization.brandName}\n1. Register\n2. Buy Insurance\n3. Check Policy\n4. My Account`;
+      return menu;
     }
 
     switch (input) {
@@ -96,10 +109,15 @@ const ussdService = {
       case '4':
         session.state = 'MY_ACCOUNT';
         return 'CON Loading...';
+      case '5':
+        session.state = 'PAY_PENDING_LIST';
+        return 'CON Loading...';
       default:
-        return `CON Welcome to ${organization.brandName}\n1. Register\n2. Buy Insurance\n3. Check Policy\n4. My Account`;
+        return menu;
     }
   },
+
+  // ── Registration Flow ──────────────────────────────────────────────────
 
   async _handleRegisterName(session, input) {
     session.data.name = input;
@@ -134,12 +152,20 @@ const ussdService = {
         },
       });
 
+      await addNotificationJob({
+        type: 'REGISTRATION',
+        phoneNumber,
+        message: `Welcome to ${organization.brandName}! Registration successful. KYC verification is pending - your agent will review your details.`,
+      });
+
       return 'END Registration successful! Your KYC is pending approval.';
     } catch (error) {
       logger.error('USSD registration failed', { error: error.message });
       return 'END Registration failed. You may already be registered.';
     }
   },
+
+  // ── Buy Insurance Flow ─────────────────────────────────────────────────
 
   async _handleBuyStart(session, input, organization, phoneNumber) {
     const farmer = await prisma.farmer.findFirst({
@@ -151,12 +177,20 @@ const ussdService = {
       return 'END Please register first.';
     }
 
+    if (farmer.kycStatus !== 'APPROVED') {
+      return `END Your KYC is ${farmer.kycStatus.toLowerCase()}. Contact your agent for approval.`;
+    }
+
+    if (!organization.poolAddress || organization.poolAddress === 'pending') {
+      return 'END Insurance not yet available. Please try again later.';
+    }
+
     if (!farmer.plots || farmer.plots.length === 0) {
       return 'END No plots found. Contact your agent to add plots.';
     }
 
     session.data.farmerId = farmer.id;
-    session.data.plots = farmer.plots.map((p) => ({ id: p.id, name: p.name }));
+    session.data.plots = farmer.plots.map((p) => ({ id: p.id, name: p.name, cropType: p.cropType }));
 
     const plotList = farmer.plots.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
     session.state = 'BUY_SELECT_PLOT';
@@ -172,6 +206,7 @@ const ussdService = {
     }
 
     session.data.selectedPlot = plots[plotIndex];
+    session.data.cropFactor = CROP_FACTORS[plots[plotIndex].cropType] || 1.0;
     session.state = 'BUY_SUM';
     return 'CON Enter sum insured (KES):';
   },
@@ -195,10 +230,15 @@ const ussdService = {
 
     session.data.duration = duration;
 
-    // Approximate premium calculation (8% base rate, adjusted by duration factor)
-    const durationFactor = duration <= 90 ? 0.5 : duration <= 180 ? 1.0 : 1.5;
-    const premium = Math.round(session.data.sumInsured * 0.08 * durationFactor);
+    const durationFactor = getDurationFactor(duration);
+    const cropFactor = session.data.cropFactor || 1.0;
+    const premium = Math.round(session.data.sumInsured * BASE_PREMIUM_RATE * cropFactor * durationFactor);
+    const platformFee = Math.round((premium * PLATFORM_FEE_PERCENT) / 100);
+    const netPremium = premium - platformFee;
+
     session.data.premium = premium;
+    session.data.platformFee = platformFee;
+    session.data.netPremium = netPremium;
 
     session.state = 'BUY_CONFIRM';
     return `CON Premium: KES ${premium}\n1. Confirm\n2. Cancel`;
@@ -219,20 +259,20 @@ const ussdService = {
         const endDate = new Date(now);
         endDate.setDate(endDate.getDate() + session.data.duration);
 
-        const policyNumber = `POL-${now.getFullYear()}-${Math.random().toString(16).slice(2, 10).toUpperCase()}`;
+        const policyNumber = generatePolicyNumber();
 
-        await prisma.policy.create({
+        const policy = await prisma.policy.create({
           data: {
             policyNumber,
             organizationId: organization.id,
-            poolAddress: organization.poolAddress || 'pending',
+            poolAddress: organization.poolAddress,
             farmerId: farmer.id,
             plotId: session.data.selectedPlot.id,
             coverageType: 'COMPREHENSIVE',
             sumInsured: session.data.sumInsured,
             premium: session.data.premium,
-            platformFee: Math.round(session.data.premium * 0.05),
-            netPremium: Math.round(session.data.premium * 0.95),
+            platformFee: session.data.platformFee,
+            netPremium: session.data.netPremium,
             startDate: now,
             endDate,
             durationDays: session.data.duration,
@@ -240,7 +280,36 @@ const ussdService = {
           },
         });
 
-        return `END Policy created! Pay KES ${session.data.premium} to activate.`;
+        // Trigger M-Pesa STK push — user gets payment prompt on their phone
+        try {
+          await paymentService.initiatePremiumPayment(organization.id, {
+            reference: policy.id,
+            phoneNumber,
+            amount: session.data.premium,
+          });
+
+          await addNotificationJob({
+            type: 'POLICY_CREATED',
+            phoneNumber,
+            message: `${organization.brandName}: Policy ${policyNumber} created for ${session.data.selectedPlot.name}. Sum insured: KES ${session.data.sumInsured}. Check your phone for M-Pesa prompt of KES ${session.data.premium}.`,
+          });
+
+          return `END Policy ${policyNumber} created!\nCheck your phone for M-Pesa prompt.\nPremium: KES ${session.data.premium}`;
+        } catch (paymentError) {
+          // Policy created but M-Pesa initiation failed — farmer can retry via Pay Pending
+          logger.error('USSD M-Pesa initiation failed', {
+            policyId: policy.id,
+            error: paymentError.message,
+          });
+
+          await addNotificationJob({
+            type: 'POLICY_PAYMENT_FAILED',
+            phoneNumber,
+            message: `${organization.brandName}: Policy ${policyNumber} created but payment could not start. Dial back and select "Pay Pending" to retry.`,
+          });
+
+          return `END Policy ${policyNumber} created.\nPayment failed to start.\nDial back and select "Pay Pending" to retry.`;
+        }
       } catch (error) {
         logger.error('USSD policy creation failed', { error: error.message });
         return 'END Failed to create policy. Please try again.';
@@ -251,6 +320,8 @@ const ussdService = {
 
     return 'END Invalid selection.';
   },
+
+  // ── Check Policy ───────────────────────────────────────────────────────
 
   async _handleCheckPolicy(organization, phoneNumber) {
     const farmer = await prisma.farmer.findFirst({
@@ -264,21 +335,28 @@ const ussdService = {
     const policies = await prisma.policy.findMany({
       where: {
         farmerId: farmer.id,
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'PENDING'] },
       },
       include: { plot: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
     });
 
     if (policies.length === 0) {
-      return 'END No active policies.';
+      return 'END No policies found.';
     }
 
     const policyList = policies
-      .map((p) => `${p.policyNumber} - ${p.plot?.name || 'N/A'} (KES ${p.sumInsured})`)
+      .map((p) => {
+        const tag = p.status === 'PENDING' ? '[UNPAID]' : '[ACTIVE]';
+        return `${tag} ${p.policyNumber} - ${p.plot?.name || 'N/A'}`;
+      })
       .join('\n');
 
     return `END Your policies:\n${policyList}`;
   },
+
+  // ── My Account ─────────────────────────────────────────────────────────
 
   async _handleMyAccount(organization, phoneNumber) {
     const farmer = await prisma.farmer.findFirst({
@@ -291,6 +369,80 @@ const ussdService = {
     }
 
     return `END Name: ${farmer.firstName} ${farmer.lastName}\nPhone: ${farmer.phoneNumber}\nKYC: ${farmer.kycStatus}\nPlots: ${farmer.plots?.length || 0}`;
+  },
+
+  // ── Pay Pending Flow ───────────────────────────────────────────────────
+
+  async _handlePayPendingList(session, input, organization, phoneNumber) {
+    const farmer = await prisma.farmer.findFirst({
+      where: { phoneNumber, organizationId: organization.id },
+    });
+
+    if (!farmer) {
+      return 'END Please register first.';
+    }
+
+    const pendingPolicies = await prisma.policy.findMany({
+      where: {
+        farmerId: farmer.id,
+        organizationId: organization.id,
+        status: 'PENDING',
+        premiumPaid: false,
+      },
+      include: { plot: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+
+    if (pendingPolicies.length === 0) {
+      return 'END No pending policies found.';
+    }
+
+    session.data.pendingPolicies = pendingPolicies.map((p) => ({
+      id: p.id,
+      policyNumber: p.policyNumber,
+      premium: Number(p.premium),
+      plotName: p.plot?.name || 'N/A',
+    }));
+
+    const list = pendingPolicies
+      .map((p, i) => `${i + 1}. ${p.policyNumber} - KES ${p.premium}`)
+      .join('\n');
+
+    session.state = 'PAY_PENDING_CONFIRM';
+    return `CON Select policy to pay:\n${list}`;
+  },
+
+  async _handlePayPendingConfirm(session, input, organization, phoneNumber) {
+    const index = parseInt(input, 10) - 1;
+    const pendingPolicies = session.data.pendingPolicies || [];
+
+    if (index < 0 || index >= pendingPolicies.length) {
+      return 'END Invalid selection.';
+    }
+
+    const selected = pendingPolicies[index];
+
+    try {
+      await paymentService.initiatePremiumPayment(organization.id, {
+        reference: selected.id,
+        phoneNumber,
+        amount: selected.premium,
+      });
+
+      return `END M-Pesa prompt sent for ${selected.policyNumber}.\nAmount: KES ${selected.premium}\nCheck your phone.`;
+    } catch (error) {
+      logger.error('USSD pay pending failed', {
+        policyId: selected.id,
+        error: error.message,
+      });
+
+      if (error.message?.includes('not in PENDING status')) {
+        return 'END This policy is no longer pending payment.';
+      }
+
+      return 'END Payment failed. Please try again later.';
+    }
   },
 };
 
