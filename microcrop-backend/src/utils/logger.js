@@ -3,6 +3,33 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
+// Mask sensitive fields in log metadata
+const SENSITIVE_KEYS = ['phoneNumber', 'mpesaPhone', 'mpesaRef', 'nationalId'];
+
+function maskValue(key, value) {
+  if (!value || typeof value !== 'string') return value;
+  if (SENSITIVE_KEYS.includes(key)) {
+    return value.length > 4 ? '****' + value.slice(-4) : '****';
+  }
+  return value;
+}
+
+function sanitizeMeta(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const cleaned = {};
+  for (const [key, value] of Object.entries(obj)) {
+    cleaned[key] = maskValue(key, value);
+  }
+  return cleaned;
+}
+
+const sanitizeFormat = winston.format((info) => {
+  for (const key of SENSITIVE_KEYS) {
+    if (info[key]) info[key] = maskValue(key, info[key]);
+  }
+  return info;
+})();
+
 const logFormat = printf(({ level, message, timestamp: ts, stack, ...meta }) => {
   const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
   return `${ts} [${level}]: ${stack || message}${metaStr}`;
@@ -13,6 +40,7 @@ const logger = winston.createLogger({
   format: combine(
     timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     errors({ stack: true }),
+    sanitizeFormat,
     logFormat
   ),
   defaultMeta: { service: 'microcrop-backend' },
