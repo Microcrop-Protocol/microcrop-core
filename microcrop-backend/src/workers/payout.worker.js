@@ -267,6 +267,10 @@ export function startPayoutWorker() {
   logger.info('Payout worker started');
 }
 
+export function getPayoutQueue() {
+  return payoutQueue;
+}
+
 export async function addPayoutJob(data) {
   if (!payoutQueue) {
     logger.warn('Payout queue not initialized - job not added');
