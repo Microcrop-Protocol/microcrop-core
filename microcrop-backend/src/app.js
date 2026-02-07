@@ -4,9 +4,14 @@ import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { env } from './config/env.js';
 import { stream } from './utils/logger.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
+import prisma from './config/database.js';
+import redis from './config/redis.js';
+import { provider } from './config/blockchain.js';
 
 // Route imports
 import { authRouter } from './routes/auth.routes.js';
@@ -28,26 +33,83 @@ import { invitationRouter } from './routes/invitation.routes.js';
 
 const app = express();
 
+// Trust proxy (required behind load balancer for correct IP + rate limiting)
+app.set('trust proxy', 1);
+
 // BigInt JSON serialization
 BigInt.prototype.toJSON = function () {
   return this.toString();
 };
 
-// Global middleware
-app.use(helmet());
-app.use(cors());
+// CORS — restrict to allowed origins in production
+const corsOptions = {};
+if (env.allowedOrigins) {
+  corsOptions.origin = env.allowedOrigins.split(',').map((o) => o.trim());
+  corsOptions.credentials = true;
+}
+app.use(cors(corsOptions));
+
+// Security headers
+app.use(
+  helmet({
+    contentSecurityPolicy: { directives: { defaultSrc: ["'self'"] } },
+    hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+    frameguard: { action: 'deny' },
+  })
+);
+
 app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Request correlation ID
+app.use((req, _res, next) => {
+  req.id = req.headers['x-request-id'] || uuidv4();
+  next();
+});
+
 app.use(morgan('combined', { stream }));
 app.use(apiLimiter);
 
 // Static file serving for uploads (in production, use S3/GCS)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// Health check
+// Liveness probe — is the process alive?
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Readiness probe — can the service handle requests?
+app.get('/health/ready', async (_req, res) => {
+  const checks = { database: 'unknown', redis: 'unknown', rpc: 'unknown' };
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = 'healthy';
+  } catch {
+    checks.database = 'unhealthy';
+  }
+
+  try {
+    await redis.ping();
+    checks.redis = 'healthy';
+  } catch {
+    checks.redis = 'unhealthy';
+  }
+
+  try {
+    if (provider) {
+      await provider.getBlockNumber();
+      checks.rpc = 'healthy';
+    } else {
+      checks.rpc = 'not_configured';
+    }
+  } catch {
+    checks.rpc = 'unhealthy';
+  }
+
+  const healthy = checks.database === 'healthy' && checks.redis === 'healthy';
+  res.status(healthy ? 200 : 503).json({ ready: healthy, checks, timestamp: new Date().toISOString() });
 });
 
 // Routes
