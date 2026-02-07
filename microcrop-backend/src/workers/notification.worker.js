@@ -38,6 +38,10 @@ export function startNotificationWorker() {
   logger.info('Notification worker started');
 }
 
+export function getNotificationQueue() {
+  return notificationQueue;
+}
+
 export async function addNotificationJob(data) {
   if (!notificationQueue) {
     return;
