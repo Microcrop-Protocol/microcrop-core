@@ -152,11 +152,11 @@ const ussdService = {
         },
       });
 
-      await addNotificationJob({
+      addNotificationJob({
         type: 'REGISTRATION',
         phoneNumber,
         message: `Welcome to ${organization.brandName}! Registration successful. KYC verification is pending - your agent will review your details.`,
-      });
+      }).catch((err) => logger.warn('Failed to queue registration SMS', { error: err.message }));
 
       return 'END Registration successful! Your KYC is pending approval.';
     } catch (error) {
@@ -288,11 +288,11 @@ const ussdService = {
             amount: session.data.premium,
           });
 
-          await addNotificationJob({
+          addNotificationJob({
             type: 'POLICY_CREATED',
             phoneNumber,
             message: `${organization.brandName}: Policy ${policyNumber} created for ${session.data.selectedPlot.name}. Sum insured: KES ${session.data.sumInsured}. Check your phone for M-Pesa prompt of KES ${session.data.premium}.`,
-          });
+          }).catch((err) => logger.warn('Failed to queue policy SMS', { error: err.message }));
 
           return `END Policy ${policyNumber} created!\nCheck your phone for M-Pesa prompt.\nPremium: KES ${session.data.premium}`;
         } catch (paymentError) {
@@ -302,11 +302,11 @@ const ussdService = {
             error: paymentError.message,
           });
 
-          await addNotificationJob({
+          addNotificationJob({
             type: 'POLICY_PAYMENT_FAILED',
             phoneNumber,
             message: `${organization.brandName}: Policy ${policyNumber} created but payment could not start. Dial back and select "Pay Pending" to retry.`,
-          });
+          }).catch((err) => logger.warn('Failed to queue payment failure SMS', { error: err.message }));
 
           return `END Policy ${policyNumber} created.\nPayment failed to start.\nDial back and select "Pay Pending" to retry.`;
         }
