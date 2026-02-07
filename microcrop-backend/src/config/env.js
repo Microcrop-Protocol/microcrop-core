@@ -73,6 +73,12 @@ export const env = {
   atUsername: optional('AT_USERNAME', ''),
   atApiKey: optional('AT_API_KEY', ''),
 
+  // Webhook signature verification
+  webhookSecret: optional('WEBHOOK_SECRET', ''),
+
+  // Allowed CORS origins (comma-separated)
+  allowedOrigins: optional('ALLOWED_ORIGINS', ''),
+
   // Internal API (CRE workflow)
   internalApiKey: optional('INTERNAL_API_KEY', ''),
 
