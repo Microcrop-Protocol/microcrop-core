@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+logs
+.env
+.env.*
+uploads
+.git
+.gitignore
+*.md
+tests
+jest.config.*
+.eslintrc*
