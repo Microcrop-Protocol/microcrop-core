@@ -193,6 +193,15 @@ const paymentService = {
       return;
     }
 
+    // Idempotency: skip if already processed
+    if (transaction.status === 'COMPLETED' || transaction.status === 'FAILED') {
+      logger.info('Payment callback already processed, skipping', {
+        transactionId: transaction.id,
+        status: transaction.status,
+      });
+      return;
+    }
+
     const provider = webhookData.provider || transaction.metadata?.provider;
 
     if (webhookData.status === 'SUCCESS' || webhookData.status === 'COMPLETED') {
@@ -217,6 +226,12 @@ const paymentService = {
           return;
         }
 
+        // Skip if policy already activated (another callback or listener already handled it)
+        if (policy.status === 'ACTIVE' && policy.onChainPolicyId) {
+          logger.info('Policy already active on-chain, skipping', { policyId: policy.id });
+          return;
+        }
+
         if (!policy.organization.poolAddress) {
           logger.error('Organization has no pool address', {
             organizationId: policy.organizationId,
@@ -233,7 +248,6 @@ const paymentService = {
             await prisma.policy.update({
               where: { id: transaction.policyId },
               data: {
-                status: 'ACTIVE',
                 premiumPaid: true,
                 premiumPaidAt: new Date(),
                 premiumTxHash: webhookData.mpesaRef,
@@ -242,24 +256,26 @@ const paymentService = {
             return;
           }
 
-          const durationSeconds = policy.durationDays * 24 * 60 * 60;
+          const farmerAddress = policy.farmer?.walletAddress || backendWallet;
 
           logger.info('Creating policy on-chain', {
             policyId: policy.id,
-            poolAddress: policy.organization.poolAddress,
+            farmerAddress,
+            plotId: policy.plotId,
             sumInsured: policy.sumInsured,
             premium: policy.premium,
-            durationSeconds,
+            durationDays: policy.durationDays,
             provider,
           });
 
-          const { txHash, blockNumber } = await createPolicyOnChain(
-            policy.organization.poolAddress,
-            backendWallet,
-            Number(policy.sumInsured),
-            Number(policy.premium),
-            durationSeconds
-          );
+          const { onChainPolicyId, txHash, blockNumber } = await createPolicyOnChain({
+            farmerAddress,
+            plotId: policy.plotId,
+            sumInsured: Number(policy.sumInsured),
+            premium: Number(policy.premium),
+            durationDays: policy.durationDays,
+            coverageType: 4, // COMPREHENSIVE
+          });
 
           // Update policy with on-chain data
           await prisma.policy.update({
@@ -269,6 +285,7 @@ const paymentService = {
               premiumPaid: true,
               premiumPaidAt: new Date(),
               premiumTxHash: webhookData.mpesaRef,
+              onChainPolicyId,
               txHash,
               blockNumber: BigInt(blockNumber),
             },
@@ -276,6 +293,7 @@ const paymentService = {
 
           logger.info('Policy activated on-chain', {
             policyId: transaction.policyId,
+            onChainPolicyId,
             txHash,
             blockNumber,
             provider,
@@ -286,11 +304,11 @@ const paymentService = {
             error: error.message,
           });
 
-          // Mark policy as paid but flag the on-chain failure
+          // Mark premium as paid but leave status PENDING so it can be retried
+          // DO NOT set ACTIVE without on-chain confirmation
           await prisma.policy.update({
             where: { id: transaction.policyId },
             data: {
-              status: 'ACTIVE',
               premiumPaid: true,
               premiumPaidAt: new Date(),
               premiumTxHash: webhookData.mpesaRef,
