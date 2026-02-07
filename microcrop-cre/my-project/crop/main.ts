@@ -11,6 +11,7 @@ import {
   ConsensusAggregationByFields,
   median,
   consensusIdenticalAggregation,
+  type ConsensusAggregation,
 } from "@chainlink/cre-sdk";
 import { getNetwork, prepareReportRequest } from "@chainlink/cre-sdk";
 import { json, ok } from "@chainlink/cre-sdk";
@@ -424,11 +425,12 @@ const onCronTrigger = (
   const httpClient = new cre.capabilities.HTTPClient();
 
   // Fetch active policies via consensus (all nodes must agree on the list)
+  // Type assertion needed because ActivePolicy[] is a complex object array
   const policiesFetcher = httpClient.sendRequest(
     runtime,
     (sendRequester: HTTPSendRequester) =>
       fetchActivePolicies(sendRequester, config, backendApiKey),
-    consensusIdenticalAggregation<ActivePolicy[]>()
+    consensusIdenticalAggregation<ActivePolicy[]>() as unknown as ConsensusAggregation<ActivePolicy[], true>
   );
   const policies = policiesFetcher().result();
 
