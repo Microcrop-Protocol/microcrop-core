@@ -10,8 +10,10 @@ import * as policyListener from './blockchain/listeners/policy.listener.js';
 import * as payoutListener from './blockchain/listeners/payout.listener.js';
 
 // Workers
-import { startPayoutWorker } from './workers/payout.worker.js';
-import { startNotificationWorker } from './workers/notification.worker.js';
+import { startPayoutWorker, getPayoutQueue } from './workers/payout.worker.js';
+import { startNotificationWorker, getNotificationQueue } from './workers/notification.worker.js';
+
+const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds forced exit
 
 const server = app.listen(env.port, () => {
   logger.info(`MicroCrop backend started on port ${env.port}`, {
@@ -40,21 +42,55 @@ try {
 }
 
 // Graceful shutdown
+let isShuttingDown = false;
+
 async function shutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
   logger.info(`${signal} received. Shutting down gracefully...`);
 
-  server.close(() => {
-    logger.info('HTTP server closed');
+  // Force exit after timeout
+  const forceExitTimer = setTimeout(() => {
+    logger.error('Graceful shutdown timed out, forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExitTimer.unref();
+
+  // Stop accepting new connections
+  await new Promise((resolve) => {
+    server.close(() => {
+      logger.info('HTTP server closed');
+      resolve();
+    });
   });
 
+  // Stop blockchain listeners
   try {
     poolListener.stop();
     policyListener.stop();
     payoutListener.stop();
+    logger.info('Blockchain listeners stopped');
   } catch {
     // listeners may not be running
   }
 
+  // Close Bull queues (let in-flight jobs finish)
+  try {
+    const payoutQueue = getPayoutQueue();
+    const notificationQueue = getNotificationQueue();
+    const closePromises = [];
+    if (payoutQueue) closePromises.push(payoutQueue.close());
+    if (notificationQueue) closePromises.push(notificationQueue.close());
+    if (closePromises.length > 0) {
+      await Promise.all(closePromises);
+      logger.info('Bull queues closed');
+    }
+  } catch {
+    // queues may not be initialized
+  }
+
+  // Disconnect Redis
   try {
     await redis.quit();
     logger.info('Redis disconnected');
@@ -62,6 +98,7 @@ async function shutdown(signal) {
     // redis may not be connected
   }
 
+  // Disconnect database
   try {
     await prisma.$disconnect();
     logger.info('Database disconnected');
@@ -69,6 +106,7 @@ async function shutdown(signal) {
     // db may not be connected
   }
 
+  clearTimeout(forceExitTimer);
   process.exit(0);
 }
 
