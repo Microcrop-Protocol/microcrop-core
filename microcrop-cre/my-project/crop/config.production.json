@@ -1,6 +1,6 @@
 {
   "schedule": "0 0 * * *",
-  "backendApiUrl": "https://api.microcrop.io",
+  "backendApiUrl": "https://api.microcrop.app",
   "weatherXmApiUrl": "https://pro.weatherxm.com/api/v1",
   "satelliteProvider": "sentinel",
   "planetApiUrl": "https://api.planet.com/data/v1",
