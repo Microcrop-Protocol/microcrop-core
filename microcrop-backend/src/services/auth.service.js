@@ -113,18 +113,10 @@ export const authService = {
       throw new UnauthorizedError('User not found or inactive');
     }
 
-    const accessToken = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        organizationId: user.organizationId,
-      },
-      env.jwtSecret,
-      { expiresIn: '1h' },
-    );
+    // Rotate: issue both a new access token and a new refresh token
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
 
-    return { accessToken };
+    return { accessToken, refreshToken: newRefreshToken };
   },
 
   async getMe(userId) {
