@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from './config/env.js';
-import { stream } from './utils/logger.js';
+import logger, { stream } from './utils/logger.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
 import prisma from './config/database.js';
@@ -46,6 +46,10 @@ const corsOptions = {};
 if (env.allowedOrigins) {
   corsOptions.origin = env.allowedOrigins.split(',').map((o) => o.trim());
   corsOptions.credentials = true;
+} else if (env.isProd) {
+  // Deny all cross-origin requests if ALLOWED_ORIGINS is not configured in production
+  corsOptions.origin = false;
+  logger.error('ALLOWED_ORIGINS not set in production — CORS will deny all cross-origin requests');
 }
 app.use(cors(corsOptions));
 
