@@ -9,6 +9,11 @@ const smsService = {
       return { status: 'skipped', reason: 'AT not configured' };
     }
 
+    if (!phoneNumber || typeof phoneNumber !== 'string' || !/^\+?\d{10,15}$/.test(phoneNumber)) {
+      logger.warn('SMS skipped - invalid phone number format', { phoneNumber });
+      return { status: 'failed', reason: 'invalid phone number' };
+    }
+
     try {
       const params = new URLSearchParams();
       params.append('username', env.atUsername);
