@@ -71,3 +71,5 @@ export const MAX_RETRY_ATTEMPTS = 3;
 export const PAYOUT_QUEUE_NAME = 'payout-processing';
 
 export const NOTIFICATION_QUEUE_NAME = 'notifications';
+
+export const BLOCKCHAIN_RETRY_QUEUE_NAME = 'blockchain-retry';
