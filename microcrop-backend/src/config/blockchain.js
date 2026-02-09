@@ -23,7 +23,10 @@ const rpcUrl = env.isDev && env.baseSepoliaRpcUrl
   ? env.baseSepoliaRpcUrl
   : env.baseRpcUrl;
 
-export const provider = new ethers.JsonRpcProvider(rpcUrl);
+const fetchReq = new ethers.FetchRequest(rpcUrl);
+fetchReq.timeout = 30000; // 30s timeout for RPC calls
+
+export const provider = new ethers.JsonRpcProvider(fetchReq);
 
 // Wallet (only if private key is configured and valid)
 let _wallet = null;
