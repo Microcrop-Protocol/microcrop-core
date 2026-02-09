@@ -15707,22 +15707,62 @@ init_encodeFunctionData();
 var PayoutReceiverABI = [
   {
     type: "function",
-    name: "submitDamageReport",
+    name: "receiveDamageReport",
     inputs: [
-      { name: "policyId", type: "uint256" },
-      { name: "damagePercent", type: "uint256" },
-      { name: "proof", type: "bytes" }
+      {
+        name: "report",
+        type: "tuple",
+        components: [
+          { name: "policyId", type: "uint256" },
+          { name: "damagePercentage", type: "uint256" },
+          { name: "weatherDamage", type: "uint256" },
+          { name: "satelliteDamage", type: "uint256" },
+          { name: "payoutAmount", type: "uint256" },
+          { name: "assessedAt", type: "uint256" }
+        ]
+      },
+      { name: "reportedWorkflowAddress", type: "address" },
+      { name: "reportedWorkflowId", type: "uint256" }
     ],
     outputs: [],
     stateMutability: "nonpayable"
   }
 ];
+var COPERNICUS_OAUTH_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
+var SENTINEL_HUB_OAUTH_URL = "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
+var SENTINEL2_NDVI_EVALSCRIPT = `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["B04", "B08", "dataMask"], units: "DN" }],
+    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+  };
+}
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  const ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+  return { ndvi: [ndvi] };
+}`.trim();
+var PLANETSCOPE_NDVI_EVALSCRIPT = `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["red", "nir", "dataMask"], units: "DN" }],
+    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+  };
+}
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  const ndvi = (sample.nir - sample.red) / (sample.nir + sample.red);
+  return { ndvi: [ndvi] };
+}`.trim();
 var ConfigSchema3 = exports_external.object({
   schedule: exports_external.string(),
   backendApiUrl: exports_external.string(),
   weatherXmApiUrl: exports_external.string(),
   satelliteProvider: exports_external.enum(["planet", "sentinel"]),
   planetApiUrl: exports_external.string(),
+  planetDataType: exports_external.string(),
   sentinelApiUrl: exports_external.string(),
   payoutReceiverAddress: exports_external.string(),
   chainSelectorName: exports_external.string(),
@@ -15740,9 +15780,9 @@ function calculateWeatherDamage(weather) {
   } else if (weather.temperature < 15 || weather.temperature > 35) {
     damage += 10;
   }
-  if (weather.precipitation > 100) {
+  if (weather.precipitation > 10) {
     damage += 30;
-  } else if (weather.precipitation > 50) {
+  } else if (weather.precipitation > 4) {
     damage += 15;
   }
   if (weather.humidity > 95) {
@@ -15786,76 +15826,45 @@ function fetchActivePolicies(sendRequester, config, apiKey) {
   return data.policies;
 }
 function fetchWeatherData(sendRequester, config, apiKey, lat, lon) {
-  const response = sendRequester.sendRequest({
-    url: `${config.weatherXmApiUrl}/cells/search?lat=${lat}&lon=${lon}&exact=true`,
+  const nearResponse = sendRequester.sendRequest({
+    url: `${config.weatherXmApiUrl}/stations/near?lat=${lat}&lon=${lon}&radius=10000`,
     method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}` }
+    headers: { "X-API-KEY": apiKey }
   }).result();
-  if (!ok(response)) {
-    throw new Error(`WeatherXM API failed: status ${response.statusCode}`);
+  if (!ok(nearResponse)) {
+    throw new Error(`WeatherXM stations/near failed: status ${nearResponse.statusCode}`);
   }
-  const data = json(response);
-  const current = data?.devices?.[0]?.current_weather ?? data;
+  const stations = json(nearResponse);
+  if (!stations || stations.length === 0) {
+    throw new Error(`No WeatherXM stations found within 10km of ${lat},${lon}`);
+  }
+  const stationId = stations[0].id;
+  const latestResponse = sendRequester.sendRequest({
+    url: `${config.weatherXmApiUrl}/stations/${stationId}/latest`,
+    method: "GET",
+    headers: { "X-API-KEY": apiKey }
+  }).result();
+  if (!ok(latestResponse)) {
+    throw new Error(`WeatherXM latest observation failed: status ${latestResponse.statusCode}`);
+  }
+  const data = json(latestResponse);
+  const obs = data?.observation;
+  if (!obs) {
+    throw new Error(`No observation data for station ${stationId}`);
+  }
   return {
-    temperature: current.temperature ?? 25,
-    precipitation: current.precipitation ?? 0,
-    humidity: current.humidity ?? 50,
-    windSpeed: current.wind_speed ?? 0
+    temperature: obs.temperature ?? 25,
+    precipitation: obs.precipitation_rate ?? 0,
+    humidity: obs.humidity ?? 50,
+    windSpeed: (obs.wind_speed ?? 0) * 3.6
   };
 }
-function fetchPlanetData(sendRequester, config, apiKey, lat, lon) {
-  const delta = 0.005;
-  const bbox = [lon - delta, lat - delta, lon + delta, lat + delta];
-  const response = sendRequester.sendRequest({
-    url: `${config.planetApiUrl}/quick-search`,
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      item_types: ["PSScene"],
-      filter: {
-        type: "AndFilter",
-        config: [
-          {
-            type: "GeometryFilter",
-            field_name: "geometry",
-            config: {
-              type: "Polygon",
-              coordinates: [[
-                [bbox[0], bbox[1]],
-                [bbox[2], bbox[1]],
-                [bbox[2], bbox[3]],
-                [bbox[0], bbox[3]],
-                [bbox[0], bbox[1]]
-              ]]
-            }
-          },
-          {
-            type: "DateRangeFilter",
-            field_name: "acquired",
-            config: {
-              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-            }
-          }
-        ]
-      }
-    })
-  }).result();
-  if (!ok(response)) {
-    throw new Error(`Planet API failed: status ${response.statusCode}`);
-  }
-  const data = json(response);
-  const ndvi = data?.features?.[0]?.properties?.ndvi ?? 0.5;
-  return { ndviValue: ndvi };
-}
-function fetchSentinelToken(sendRequester, clientId, clientSecret) {
+function fetchOAuthToken(sendRequester, tokenUrl, clientId, clientSecret) {
   const response = sendRequester.sendRequests({
     input: {
       requests: [
         {
-          url: "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
+          url: tokenUrl,
           method: "POST",
           headers: ["Content-Type: application/x-www-form-urlencoded"],
           body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`
@@ -15867,26 +15876,19 @@ function fetchSentinelToken(sendRequester, clientId, clientSecret) {
   const data = JSON.parse(new TextDecoder().decode(responseBody));
   return data.access_token;
 }
-function fetchSentinelData(sendRequester, config, token, lat, lon) {
+function fetchNdviFromSentinelHub(sendRequester, apiUrl, token, dataType, evalscript, useCloudFilter, lat, lon) {
   const delta = 0.005;
   const bbox = [lon - delta, lat - delta, lon + delta, lat + delta];
   const now = new Date;
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const toDate = now.toISOString().split("T")[0];
   const fromDate = weekAgo.toISOString().split("T")[0];
-  const evalscript = `
-//VERSION=3
-function setup() {
-  return {
-    input: [{ bands: ["B04", "B08"], units: "DN" }],
-    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+  const dataFilter = {
+    timeRange: { from: `${fromDate}T00:00:00Z`, to: `${toDate}T23:59:59Z` }
   };
-}
-function evaluatePixel(sample) {
-  const ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-  return { ndvi: [ndvi] };
-}
-`.trim();
+  if (useCloudFilter) {
+    dataFilter.maxCloudCoverage = 30;
+  }
   const payload = {
     input: {
       bounds: {
@@ -15895,11 +15897,8 @@ function evaluatePixel(sample) {
       },
       data: [
         {
-          type: "sentinel-2-l2a",
-          dataFilter: {
-            timeRange: { from: `${fromDate}T00:00:00Z`, to: `${toDate}T23:59:59Z` },
-            maxCloudCoverage: 30
-          }
+          type: dataType,
+          dataFilter
         }
       ]
     },
@@ -15913,7 +15912,7 @@ function evaluatePixel(sample) {
     }
   };
   const response = sendRequester.sendRequest({
-    url: `${config.sentinelApiUrl}/statistics`,
+    url: `${apiUrl}/statistics`,
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -15922,7 +15921,7 @@ function evaluatePixel(sample) {
     body: JSON.stringify(payload)
   }).result();
   if (!ok(response)) {
-    throw new Error(`Sentinel Hub API failed: status ${response.statusCode}`);
+    throw new Error(`Sentinel Hub Statistical API failed: status ${response.statusCode}`);
   }
   const data = json(response);
   const stats = data?.data?.[0]?.outputs?.ndvi?.bands?.B0?.stats;
@@ -15930,22 +15929,36 @@ function evaluatePixel(sample) {
   return { ndviValue: meanNdvi };
 }
 function calculateDamageIndex(weatherDamage, satelliteDamage, config) {
-  const combined = config.weatherWeight * weatherDamage + config.satelliteWeight * satelliteDamage;
-  return Math.round(Math.min(combined, 100));
+  const weatherWeightInt = Math.round(config.weatherWeight * 100);
+  const satelliteWeightInt = Math.round(config.satelliteWeight * 100);
+  const combined = Math.floor((weatherWeightInt * weatherDamage + satelliteWeightInt * satelliteDamage) / 100);
+  return Math.min(combined, 100);
 }
-function submitDamageReport(runtime2, config, onChainPolicyId, damagePercent) {
+function submitDamageReport(runtime2, config, onChainPolicyId, damagePercent, weatherDamage, satelliteDamage, sumInsured) {
   const network248 = getNetwork({ chainSelectorName: config.chainSelectorName });
   if (!network248) {
     throw new Error(`Unsupported chain: ${config.chainSelectorName}`);
   }
   const evmClient = new cre.capabilities.EVMClient(network248.chainSelector.selector);
+  const workflowAddress = runtime2.getSecret({ id: "WORKFLOW_ADDRESS" }).result().value;
+  const workflowId = runtime2.getSecret({ id: "WORKFLOW_ID" }).result().value;
+  const sumInsuredOnChain = BigInt(Math.round(sumInsured * 1e6));
+  const payoutAmount = sumInsuredOnChain * BigInt(damagePercent) / BigInt(100);
+  const assessedAt = BigInt(Math.floor(Date.now() / 1000));
   const callData = encodeFunctionData({
     abi: PayoutReceiverABI,
-    functionName: "submitDamageReport",
+    functionName: "receiveDamageReport",
     args: [
-      BigInt(onChainPolicyId),
-      BigInt(damagePercent),
-      "0x"
+      {
+        policyId: BigInt(onChainPolicyId),
+        damagePercentage: BigInt(damagePercent),
+        weatherDamage: BigInt(weatherDamage),
+        satelliteDamage: BigInt(satelliteDamage),
+        payoutAmount,
+        assessedAt
+      },
+      workflowAddress,
+      BigInt(workflowId)
     ]
   });
   const report2 = runtime2.report(prepareReportRequest(callData)).result();
@@ -15958,7 +15971,7 @@ function submitDamageReport(runtime2, config, onChainPolicyId, damagePercent) {
     throw new Error(`Transaction failed for policy ${onChainPolicyId}: ${writeResult.errorMessage ?? "unknown"}`);
   }
   const txHashHex = writeResult.txHash ? Array.from(writeResult.txHash).map((b) => b.toString(16).padStart(2, "0")).join("") : "unknown";
-  runtime2.log(`Damage report submitted for policy ${onChainPolicyId}: ${damagePercent}% damage, tx: 0x${txHashHex}`);
+  runtime2.log(`Damage report submitted for policy ${onChainPolicyId}: ${damagePercent}% damage, payout: ${payoutAmount.toString()} USDC, tx: 0x${txHashHex}`);
 }
 var onCronTrigger = (runtime2, _payload) => {
   const config = runtime2.config;
@@ -15966,6 +15979,7 @@ var onCronTrigger = (runtime2, _payload) => {
   const backendApiKey = runtime2.getSecret({ id: "BACKEND_API_KEY" }).result().value;
   const weatherApiKey = runtime2.getSecret({ id: "WEATHERXM_API_KEY" }).result().value;
   const httpClient = new cre.capabilities.HTTPClient;
+  const confidentialClient = new cre.capabilities.ConfidentialHTTPClient;
   const policiesFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchActivePolicies(sendRequester, config, backendApiKey), consensusIdenticalAggregation());
   const policies = policiesFetcher().result();
   if (policies.length === 0) {
@@ -15973,17 +15987,29 @@ var onCronTrigger = (runtime2, _payload) => {
     return "No active policies to assess.";
   }
   runtime2.log(`Found ${policies.length} active policies to assess.`);
-  let sentinelToken;
-  if (config.satelliteProvider === "sentinel") {
-    const confidentialClient = new cre.capabilities.ConfidentialHTTPClient;
+  let satelliteToken;
+  let satelliteApiUrl;
+  let satelliteDataType;
+  let satelliteEvalscript;
+  let useCloudFilter;
+  if (config.satelliteProvider === "planet") {
+    const clientId = runtime2.getSecret({ id: "PLANET_CLIENT_ID" }).result().value;
+    const clientSecret = runtime2.getSecret({ id: "PLANET_CLIENT_SECRET" }).result().value;
+    const tokenFetcher = confidentialClient.sendRequests(runtime2, (sendRequester) => fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret), consensusIdenticalAggregation());
+    satelliteToken = tokenFetcher().result();
+    satelliteApiUrl = config.planetApiUrl;
+    satelliteDataType = config.planetDataType;
+    satelliteEvalscript = PLANETSCOPE_NDVI_EVALSCRIPT;
+    useCloudFilter = false;
+  } else {
     const clientId = runtime2.getSecret({ id: "SENTINEL_CLIENT_ID" }).result().value;
     const clientSecret = runtime2.getSecret({ id: "SENTINEL_CLIENT_SECRET" }).result().value;
-    const tokenFetcher = confidentialClient.sendRequests(runtime2, (sendRequester) => fetchSentinelToken(sendRequester, clientId, clientSecret), consensusIdenticalAggregation());
-    sentinelToken = tokenFetcher().result();
-  }
-  let planetApiKey;
-  if (config.satelliteProvider === "planet") {
-    planetApiKey = runtime2.getSecret({ id: "PLANET_API_KEY" }).result().value;
+    const tokenFetcher = confidentialClient.sendRequests(runtime2, (sendRequester) => fetchOAuthToken(sendRequester, COPERNICUS_OAUTH_URL, clientId, clientSecret), consensusIdenticalAggregation());
+    satelliteToken = tokenFetcher().result();
+    satelliteApiUrl = config.sentinelApiUrl;
+    satelliteDataType = "sentinel-2-l2a";
+    satelliteEvalscript = SENTINEL2_NDVI_EVALSCRIPT;
+    useCloudFilter = true;
   }
   let reportsSubmitted = 0;
   for (const policy of policies) {
@@ -15996,25 +16022,17 @@ var onCronTrigger = (runtime2, _payload) => {
       windSpeed: () => median()
     }));
     const weatherData = weatherFetcher().result();
-    let satelliteData;
-    if (config.satelliteProvider === "sentinel" && sentinelToken) {
-      const satFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchSentinelData(sendRequester, config, sentinelToken, lat, lon), ConsensusAggregationByFields({
-        ndviValue: () => median()
-      }));
-      satelliteData = satFetcher().result();
-    } else {
-      const satFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchPlanetData(sendRequester, config, planetApiKey, lat, lon), ConsensusAggregationByFields({
-        ndviValue: () => median()
-      }));
-      satelliteData = satFetcher().result();
-    }
+    const satFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchNdviFromSentinelHub(sendRequester, satelliteApiUrl, satelliteToken, satelliteDataType, satelliteEvalscript, useCloudFilter, lat, lon), ConsensusAggregationByFields({
+      ndviValue: () => median()
+    }));
+    const satelliteData = satFetcher().result();
     const weatherDamage = calculateWeatherDamage(weatherData);
     const satelliteDamage = calculateSatelliteDamage(satelliteData);
     const combinedDamage = calculateDamageIndex(weatherDamage, satelliteDamage, config);
     runtime2.log(`Policy ${policy.policyId}: weather=${weatherDamage}%, satellite=${satelliteDamage}%, combined=${combinedDamage}%`);
     if (combinedDamage >= config.damageThreshold) {
       runtime2.log(`Policy ${policy.policyId}: damage ${combinedDamage}% >= threshold ${config.damageThreshold}%, submitting report.`);
-      submitDamageReport(runtime2, config, policy.onChainPolicyId, combinedDamage);
+      submitDamageReport(runtime2, config, policy.onChainPolicyId, combinedDamage, weatherDamage, satelliteDamage, policy.sumInsured);
       reportsSubmitted++;
     }
   }

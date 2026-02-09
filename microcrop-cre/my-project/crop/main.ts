@@ -20,6 +20,49 @@ import { z } from "zod";
 import { PayoutReceiverABI } from "./contracts/abi";
 
 // ---------------------------------------------------------------------------
+// OAuth Token Endpoints
+// ---------------------------------------------------------------------------
+const COPERNICUS_OAUTH_URL =
+  "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
+const SENTINEL_HUB_OAUTH_URL =
+  "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
+
+// ---------------------------------------------------------------------------
+// NDVI Evalscripts
+// ---------------------------------------------------------------------------
+
+// Sentinel-2 L2A: B04 = Red (665nm), B08 = NIR (842nm)
+const SENTINEL2_NDVI_EVALSCRIPT = `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["B04", "B08", "dataMask"], units: "DN" }],
+    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+  };
+}
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  const ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+  return { ndvi: [ndvi] };
+}`.trim();
+
+// PlanetScope SuperDove 8-band: red (band 6), nir (band 8)
+// Band names match Sentinel Hub's PlanetScope integration
+const PLANETSCOPE_NDVI_EVALSCRIPT = `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["red", "nir", "dataMask"], units: "DN" }],
+    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+  };
+}
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  const ndvi = (sample.nir - sample.red) / (sample.nir + sample.red);
+  return { ndvi: [ndvi] };
+}`.trim();
+
+// ---------------------------------------------------------------------------
 // Config Schema
 // ---------------------------------------------------------------------------
 const ConfigSchema = z.object({
@@ -27,8 +70,9 @@ const ConfigSchema = z.object({
   backendApiUrl: z.string(),
   weatherXmApiUrl: z.string(),
   satelliteProvider: z.enum(["planet", "sentinel"]),
-  planetApiUrl: z.string(),
-  sentinelApiUrl: z.string(),
+  planetApiUrl: z.string(), // Sentinel Hub instance URL for PlanetScope
+  planetDataType: z.string(), // "planetscope" or "byoc-<collection-id>"
+  sentinelApiUrl: z.string(), // Copernicus Data Space URL for Sentinel-2
   payoutReceiverAddress: z.string(),
   chainSelectorName: z.string(),
   gasLimit: z.string(),
@@ -197,72 +241,11 @@ function fetchWeatherData(
 }
 
 // ---------------------------------------------------------------------------
-// Fetch Planet Labs Satellite Data
+// Fetch OAuth Token (shared by both satellite providers)
 // ---------------------------------------------------------------------------
-function fetchPlanetData(
-  sendRequester: HTTPSendRequester,
-  config: Config,
-  apiKey: string,
-  lat: number,
-  lon: number
-): SatelliteData {
-  // Build a small bounding box (~500m) around the point
-  const delta = 0.005;
-  const bbox = [lon - delta, lat - delta, lon + delta, lat + delta];
-
-  const response = sendRequester.sendRequest({
-    url: `${config.planetApiUrl}/quick-search`,
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      item_types: ["PSScene"],
-      filter: {
-        type: "AndFilter",
-        config: [
-          {
-            type: "GeometryFilter",
-            field_name: "geometry",
-            config: {
-              type: "Polygon",
-              coordinates: [[
-                [bbox[0], bbox[1]],
-                [bbox[2], bbox[1]],
-                [bbox[2], bbox[3]],
-                [bbox[0], bbox[3]],
-                [bbox[0], bbox[1]],
-              ]],
-            },
-          },
-          {
-            type: "DateRangeFilter",
-            field_name: "acquired",
-            config: {
-              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-            },
-          },
-        ],
-      },
-    }),
-  }).result();
-
-  if (!ok(response)) {
-    throw new Error(`Planet API failed: status ${response.statusCode}`);
-  }
-
-  const data = json(response) as any;
-  // Extract NDVI from Planet analytics or default to moderate health
-  const ndvi = data?.features?.[0]?.properties?.ndvi ?? 0.5;
-  return { ndviValue: ndvi };
-}
-
-// ---------------------------------------------------------------------------
-// Fetch Sentinel Hub Satellite Data (Copernicus)
-// ---------------------------------------------------------------------------
-function fetchSentinelToken(
+function fetchOAuthToken(
   sendRequester: ConfidentialHTTPSendRequester,
+  tokenUrl: string,
   clientId: string,
   clientSecret: string
 ): string {
@@ -270,7 +253,7 @@ function fetchSentinelToken(
     input: {
       requests: [
         {
-          url: "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
+          url: tokenUrl,
           method: "POST",
           headers: ["Content-Type: application/x-www-form-urlencoded"],
           body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`,
@@ -284,10 +267,17 @@ function fetchSentinelToken(
   return data.access_token as string;
 }
 
-function fetchSentinelData(
+// ---------------------------------------------------------------------------
+// Fetch NDVI via Sentinel Hub Statistical API
+// Works for both PlanetScope and Sentinel-2 — just different apiUrl, dataType, and evalscript
+// ---------------------------------------------------------------------------
+function fetchNdviFromSentinelHub(
   sendRequester: HTTPSendRequester,
-  config: Config,
+  apiUrl: string,
   token: string,
+  dataType: string,
+  evalscript: string,
+  useCloudFilter: boolean,
   lat: number,
   lon: number
 ): SatelliteData {
@@ -300,20 +290,13 @@ function fetchSentinelData(
   const toDate = now.toISOString().split("T")[0];
   const fromDate = weekAgo.toISOString().split("T")[0];
 
-  // Evalscript to calculate NDVI from Sentinel-2 B04 (red) and B08 (NIR)
-  const evalscript = `
-//VERSION=3
-function setup() {
-  return {
-    input: [{ bands: ["B04", "B08"], units: "DN" }],
-    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+  const dataFilter: Record<string, any> = {
+    timeRange: { from: `${fromDate}T00:00:00Z`, to: `${toDate}T23:59:59Z` },
   };
-}
-function evaluatePixel(sample) {
-  const ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-  return { ndvi: [ndvi] };
-}
-`.trim();
+  // Cloud coverage filter only available for Sentinel-2
+  if (useCloudFilter) {
+    dataFilter.maxCloudCoverage = 30;
+  }
 
   const payload = {
     input: {
@@ -323,11 +306,8 @@ function evaluatePixel(sample) {
       },
       data: [
         {
-          type: "sentinel-2-l2a",
-          dataFilter: {
-            timeRange: { from: `${fromDate}T00:00:00Z`, to: `${toDate}T23:59:59Z` },
-            maxCloudCoverage: 30,
-          },
+          type: dataType,
+          dataFilter: dataFilter,
         },
       ],
     },
@@ -342,7 +322,7 @@ function evaluatePixel(sample) {
   };
 
   const response = sendRequester.sendRequest({
-    url: `${config.sentinelApiUrl}/statistics`,
+    url: `${apiUrl}/statistics`,
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -352,7 +332,7 @@ function evaluatePixel(sample) {
   }).result();
 
   if (!ok(response)) {
-    throw new Error(`Sentinel Hub API failed: status ${response.statusCode}`);
+    throw new Error(`Sentinel Hub Statistical API failed: status ${response.statusCode}`);
   }
 
   const data = json(response) as any;
@@ -470,8 +450,9 @@ const onCronTrigger = (
   const backendApiKey = runtime.getSecret({ id: "BACKEND_API_KEY" }).result().value;
   const weatherApiKey = runtime.getSecret({ id: "WEATHERXM_API_KEY" }).result().value;
 
-  // Set up HTTP client for public requests
+  // Set up HTTP clients
   const httpClient = new cre.capabilities.HTTPClient();
+  const confidentialClient = new cre.capabilities.ConfidentialHTTPClient();
 
   // Fetch active policies via consensus (all nodes must agree on the list)
   // Type assertion needed because ActivePolicy[] is a complex object array
@@ -490,26 +471,45 @@ const onCronTrigger = (
 
   runtime.log(`Found ${policies.length} active policies to assess.`);
 
-  // Get satellite credentials if using Sentinel
-  let sentinelToken: string | undefined;
-  if (config.satelliteProvider === "sentinel") {
-    const confidentialClient = new cre.capabilities.ConfidentialHTTPClient();
-    const clientId = runtime.getSecret({ id: "SENTINEL_CLIENT_ID" }).result().value;
-    const clientSecret = runtime.getSecret({ id: "SENTINEL_CLIENT_SECRET" }).result().value;
+  // Fetch OAuth token for the active satellite provider
+  let satelliteToken: string;
+  let satelliteApiUrl: string;
+  let satelliteDataType: string;
+  let satelliteEvalscript: string;
+  let useCloudFilter: boolean;
 
-    // Fetch Sentinel token via confidential HTTP (each node independently)
+  if (config.satelliteProvider === "planet") {
+    // PlanetScope via Sentinel Hub main instance
+    const clientId = runtime.getSecret({ id: "PLANET_CLIENT_ID" }).result().value;
+    const clientSecret = runtime.getSecret({ id: "PLANET_CLIENT_SECRET" }).result().value;
+
     const tokenFetcher = confidentialClient.sendRequests(
       runtime,
       (sendRequester: ConfidentialHTTPSendRequester) =>
-        fetchSentinelToken(sendRequester, clientId, clientSecret),
+        fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret),
       consensusIdenticalAggregation<string>()
     );
-    sentinelToken = tokenFetcher().result();
-  }
+    satelliteToken = tokenFetcher().result();
+    satelliteApiUrl = config.planetApiUrl;
+    satelliteDataType = config.planetDataType;
+    satelliteEvalscript = PLANETSCOPE_NDVI_EVALSCRIPT;
+    useCloudFilter = false; // Not available for PlanetScope
+  } else {
+    // Sentinel-2 via Copernicus Data Space
+    const clientId = runtime.getSecret({ id: "SENTINEL_CLIENT_ID" }).result().value;
+    const clientSecret = runtime.getSecret({ id: "SENTINEL_CLIENT_SECRET" }).result().value;
 
-  let planetApiKey: string | undefined;
-  if (config.satelliteProvider === "planet") {
-    planetApiKey = runtime.getSecret({ id: "PLANET_API_KEY" }).result().value;
+    const tokenFetcher = confidentialClient.sendRequests(
+      runtime,
+      (sendRequester: ConfidentialHTTPSendRequester) =>
+        fetchOAuthToken(sendRequester, COPERNICUS_OAUTH_URL, clientId, clientSecret),
+      consensusIdenticalAggregation<string>()
+    );
+    satelliteToken = tokenFetcher().result();
+    satelliteApiUrl = config.sentinelApiUrl;
+    satelliteDataType = "sentinel-2-l2a";
+    satelliteEvalscript = SENTINEL2_NDVI_EVALSCRIPT;
+    useCloudFilter = true;
   }
 
   let reportsSubmitted = 0;
@@ -532,29 +532,20 @@ const onCronTrigger = (
     );
     const weatherData = weatherFetcher().result();
 
-    // Fetch satellite data with median consensus
-    let satelliteData: SatelliteData;
-    if (config.satelliteProvider === "sentinel" && sentinelToken) {
-      const satFetcher = httpClient.sendRequest(
-        runtime,
-        (sendRequester: HTTPSendRequester) =>
-          fetchSentinelData(sendRequester, config, sentinelToken!, lat, lon),
-        ConsensusAggregationByFields<SatelliteData>({
-          ndviValue: () => median(),
-        })
-      );
-      satelliteData = satFetcher().result();
-    } else {
-      const satFetcher = httpClient.sendRequest(
-        runtime,
-        (sendRequester: HTTPSendRequester) =>
-          fetchPlanetData(sendRequester, config, planetApiKey!, lat, lon),
-        ConsensusAggregationByFields<SatelliteData>({
-          ndviValue: () => median(),
-        })
-      );
-      satelliteData = satFetcher().result();
-    }
+    // Fetch NDVI via Sentinel Hub Statistical API (same API for both providers)
+    const satFetcher = httpClient.sendRequest(
+      runtime,
+      (sendRequester: HTTPSendRequester) =>
+        fetchNdviFromSentinelHub(
+          sendRequester, satelliteApiUrl, satelliteToken,
+          satelliteDataType, satelliteEvalscript, useCloudFilter,
+          lat, lon
+        ),
+      ConsensusAggregationByFields<SatelliteData>({
+        ndviValue: () => median(),
+      })
+    );
+    const satelliteData = satFetcher().result();
 
     // Calculate damage scores
     const weatherDamage = calculateWeatherDamage(weatherData);
