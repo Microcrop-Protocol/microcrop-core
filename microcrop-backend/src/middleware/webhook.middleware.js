@@ -40,6 +40,19 @@ export function verifyWebhookSignature(req, res, next) {
       return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
     }
 
+    // Replay prevention: reject stale webhooks if timestamp header is present
+    const timestamp = req.headers['x-webhook-timestamp'];
+    if (timestamp) {
+      const webhookTime = Number(timestamp) * 1000; // assume seconds → ms
+      const age = Math.abs(Date.now() - webhookTime);
+      if (age > 300000) { // 5 minutes
+        logger.warn('Webhook timestamp too old, possible replay', { age: Math.round(age / 1000) });
+        return res.status(401).json({ success: false, error: 'Webhook timestamp expired' });
+      }
+    } else if (env.isProd) {
+      logger.warn('Webhook callback missing timestamp header');
+    }
+
     next();
   } catch (error) {
     logger.warn('Webhook signature verification error', { error: error.message });
