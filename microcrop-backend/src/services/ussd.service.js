@@ -10,6 +10,23 @@ const SESSION_TTL = 600; // 10 minutes
 
 const ussdService = {
   async handleRequest(sessionId, serviceCode, phoneNumber, text) {
+    const sessionKey = `ussd:${sessionId}`;
+    const lockKey = `ussd:lock:${sessionId}`;
+
+    // Acquire session lock (5s TTL) to prevent concurrent request corruption
+    let lockAcquired = false;
+    try {
+      const lockResult = await redis.set(lockKey, '1', 'EX', 5, 'NX');
+      lockAcquired = lockResult === 'OK';
+    } catch (redisErr) {
+      logger.error('Redis unavailable for USSD session lock', { sessionId, error: redisErr.message });
+      return 'END Service temporarily unavailable. Please try again.';
+    }
+
+    if (!lockAcquired) {
+      return 'END Please wait, your request is being processed.';
+    }
+
     try {
       const organization = await prisma.organization.findFirst({
         where: { ussdShortCode: serviceCode },
@@ -21,8 +38,14 @@ const ussdService = {
 
       const normalizedPhone = normalizePhone(phoneNumber);
 
-      const sessionKey = `ussd:${sessionId}`;
-      const rawSession = await redis.get(sessionKey);
+      let rawSession;
+      try {
+        rawSession = await redis.get(sessionKey);
+      } catch (redisErr) {
+        logger.error('Redis unavailable for USSD session read', { sessionId, error: redisErr.message });
+        return 'END Service temporarily unavailable. Please try again.';
+      }
+
       let session = rawSession ? JSON.parse(rawSession) : { state: 'MAIN_MENU', data: {} };
 
       const selections = text ? text.split('*') : [];
@@ -74,16 +97,27 @@ const ussdService = {
           response = 'END An error occurred. Please try again.';
       }
 
-      if (response.startsWith('END')) {
-        await redis.del(sessionKey);
-      } else {
-        await redis.set(sessionKey, JSON.stringify(session), 'EX', SESSION_TTL);
+      try {
+        if (response.startsWith('END')) {
+          await redis.del(sessionKey);
+        } else {
+          await redis.set(sessionKey, JSON.stringify(session), 'EX', SESSION_TTL);
+        }
+      } catch (redisErr) {
+        logger.error('Redis unavailable for USSD session write', { sessionId, error: redisErr.message });
       }
 
       return response;
     } catch (error) {
       logger.error('USSD request error', { sessionId, error: error.message });
       return 'END An error occurred. Please try again.';
+    } finally {
+      // Always release session lock
+      try {
+        await redis.del(lockKey);
+      } catch {
+        // Lock will auto-expire after 5s
+      }
     }
   },
 
