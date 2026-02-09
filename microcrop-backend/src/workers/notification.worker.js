@@ -7,7 +7,12 @@ import { NOTIFICATION_QUEUE_NAME } from '../utils/constants.js';
 let notificationQueue = null;
 
 export function startNotificationWorker() {
-  notificationQueue = new Bull(NOTIFICATION_QUEUE_NAME, env.redisUrl);
+  notificationQueue = new Bull(NOTIFICATION_QUEUE_NAME, env.redisUrl, {
+    defaultJobOptions: {
+      removeOnComplete: 50,
+      removeOnFail: false,
+    },
+  });
 
   notificationQueue.process(async (job) => {
     const { type, phoneNumber, message } = job.data;
@@ -32,6 +37,13 @@ export function startNotificationWorker() {
     logger.info('Notification job completed', {
       jobId: job.id,
       type: job.data.type,
+    });
+  });
+
+  notificationQueue.on('stalled', (job) => {
+    logger.warn('Notification job stalled', {
+      jobId: job.id,
+      type: job.data?.type,
     });
   });
 
