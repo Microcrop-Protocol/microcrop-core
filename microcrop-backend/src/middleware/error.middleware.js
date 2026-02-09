@@ -1,12 +1,25 @@
 import logger from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
 
-export function errorHandler(err, _req, res, _next) {
-  // Log the error
+export function errorHandler(err, req, res, _next) {
+  // Log the error with request context
+  const errorContext = {
+    method: req.method,
+    path: req.path,
+    userId: req.user?.id,
+    organizationId: req.organization?.id || req.user?.organizationId,
+    code: err.code,
+    statusCode: err.statusCode,
+  };
+
   if (err.isOperational) {
-    logger.warn(err.message, { code: err.code, statusCode: err.statusCode });
+    logger.warn(err.message, errorContext);
   } else {
-    logger.error('Unexpected error', { message: err.message, stack: err.stack });
+    logger.error('Unexpected error', {
+      ...errorContext,
+      message: err.message,
+      stack: err.stack,
+    });
   }
 
   // Prisma known errors
