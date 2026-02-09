@@ -30,10 +30,6 @@ export function paginate(page = 1, limit = 50) {
   return { skip: (p - 1) * l, take: l, page: p, limit: l };
 }
 
-export function isValidUUID(str) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
-}
-
 export function formatPaginatedResponse(data, total, page, limit) {
   return {
     success: true,
