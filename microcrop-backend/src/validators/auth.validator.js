@@ -38,3 +38,19 @@ export const loginSchema = Joi.object({
 export const refreshTokenSchema = Joi.object({
   refreshToken: Joi.string().required(),
 });
+
+export const forgotPasswordSchema = Joi.object({
+  email: Joi.string().email().required(),
+});
+
+export const resetPasswordSchema = Joi.object({
+  token: Joi.string().required(),
+  password: Joi.string()
+    .min(8)
+    .pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?])/)
+    .required()
+    .messages({
+      'string.pattern.base':
+        'Password must contain at least one uppercase letter, one number, and one special character',
+    }),
+});
