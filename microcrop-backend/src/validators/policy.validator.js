@@ -39,7 +39,7 @@ export const quoteSchema = Joi.object({
   farmerId: Joi.string().uuid().required(),
   plotId: Joi.string().uuid().required(),
   sumInsured: Joi.number().min(1000).required(),
-  coverageType: Joi.string().valid('DROUGHT', 'FLOOD', 'BOTH').required(),
+  coverageType: Joi.string().valid('DROUGHT', 'FLOOD', 'BOTH', 'COMPREHENSIVE').required(),
   durationDays: Joi.number().integer().min(30).max(365).required(),
 });
 
@@ -47,6 +47,6 @@ export const purchaseSchema = Joi.object({
   farmerId: Joi.string().uuid().required(),
   plotId: Joi.string().uuid().required(),
   sumInsured: Joi.number().min(1000).required(),
-  coverageType: Joi.string().valid('DROUGHT', 'FLOOD', 'BOTH').required(),
+  coverageType: Joi.string().valid('DROUGHT', 'FLOOD', 'BOTH', 'COMPREHENSIVE').required(),
   durationDays: Joi.number().integer().min(30).max(365).required(),
 });
