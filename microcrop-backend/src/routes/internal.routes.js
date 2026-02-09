@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import prisma from '../config/database.js';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
 import { invitationController } from '../controllers/invitation.controller.js';
+import { checkPendingPayouts } from '../workers/payout.worker.js';
 
 const router = Router();
 
@@ -10,7 +12,17 @@ const router = Router();
 function authenticateInternal(req, res, next) {
   const apiKey = req.headers['x-api-key'];
 
-  if (!env.internalApiKey || !apiKey || apiKey !== env.internalApiKey) {
+  if (!env.internalApiKey || !apiKey) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Invalid API key' },
+    });
+  }
+
+  const keyBuffer = Buffer.from(apiKey);
+  const expectedBuffer = Buffer.from(env.internalApiKey);
+
+  if (keyBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(keyBuffer, expectedBuffer)) {
     return res.status(401).json({
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Invalid API key' },
@@ -106,6 +118,21 @@ router.post('/policies/expire-check', async (_req, res, next) => {
     logger.info(`Internal API: expired ${result.count} overdue policies`);
 
     res.json({ success: true, data: { expiredCount: result.count } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/internal/payouts/check-pending
+ *
+ * Finalizes payouts stuck in PROCESSING status. Called by cron job.
+ */
+router.post('/payouts/check-pending', async (_req, res, next) => {
+  try {
+    await checkPendingPayouts();
+    logger.info('Internal API: pending payouts check completed');
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }
