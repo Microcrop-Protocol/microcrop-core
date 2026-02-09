@@ -5,6 +5,7 @@ import { PaymentError } from '../utils/errors.js';
 
 const swyptClient = axios.create({
   baseURL: env.swyptApiUrl,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
     'x-api-key': env.swyptApiKey,
