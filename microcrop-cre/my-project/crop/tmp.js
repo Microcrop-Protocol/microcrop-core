@@ -15728,33 +15728,53 @@ var PayoutReceiverABI = [
     stateMutability: "nonpayable"
   }
 ];
-var COPERNICUS_OAUTH_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
+var BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function toBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let result = "";
+  for (let i2 = 0;i2 < bytes.length; i2 += 3) {
+    const b0 = bytes[i2];
+    const b1 = i2 + 1 < bytes.length ? bytes[i2 + 1] : 0;
+    const b2 = i2 + 2 < bytes.length ? bytes[i2 + 2] : 0;
+    result += BASE64_CHARS[b0 >> 2 & 63];
+    result += BASE64_CHARS[(b0 << 4 | b1 >> 4) & 63];
+    result += i2 + 1 < bytes.length ? BASE64_CHARS[(b1 << 2 | b2 >> 6) & 63] : "=";
+    result += i2 + 2 < bytes.length ? BASE64_CHARS[b2 & 63] : "=";
+  }
+  return result;
+}
 var SENTINEL_HUB_OAUTH_URL = "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
 var SENTINEL2_NDVI_EVALSCRIPT = `
 //VERSION=3
 function setup() {
   return {
-    input: [{ bands: ["B04", "B08", "dataMask"], units: "DN" }],
-    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+    input: [{ bands: ["B04", "B08", "dataMask"] }],
+    output: [
+      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 }
+    ]
   };
 }
 function evaluatePixel(sample) {
-  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  if (sample.dataMask === 0) return { ndvi: [NaN], dataMask: [0] };
   const ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-  return { ndvi: [ndvi] };
+  return { ndvi: [ndvi], dataMask: [1] };
 }`.trim();
 var PLANETSCOPE_NDVI_EVALSCRIPT = `
 //VERSION=3
 function setup() {
   return {
-    input: [{ bands: ["red", "nir", "dataMask"], units: "DN" }],
-    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+    input: [{ bands: ["red", "nir", "dataMask"] }],
+    output: [
+      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 }
+    ]
   };
 }
 function evaluatePixel(sample) {
-  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  if (sample.dataMask === 0) return { ndvi: [NaN], dataMask: [0] };
   const ndvi = (sample.nir - sample.red) / (sample.nir + sample.red);
-  return { ndvi: [ndvi] };
+  return { ndvi: [ndvi], dataMask: [1] };
 }`.trim();
 var ConfigSchema3 = exports_external.object({
   schedule: exports_external.string(),
@@ -15823,7 +15843,14 @@ function fetchActivePolicies(sendRequester, config, apiKey) {
     throw new Error(`Failed to fetch active policies: status ${response.statusCode}`);
   }
   const data = json(response);
-  return data.policies;
+  return data.policies.map((p) => ({
+    policyId: p.policyId,
+    plotLatitude: p.plotLatitude,
+    plotLongitude: p.plotLongitude,
+    cropType: p.cropType,
+    onChainPolicyId: p.onChainPolicyId,
+    sumInsured: p.sumInsured
+  }));
 }
 function fetchWeatherData(sendRequester, config, apiKey, lat, lon) {
   const nearResponse = sendRequester.sendRequest({
@@ -15834,8 +15861,9 @@ function fetchWeatherData(sendRequester, config, apiKey, lat, lon) {
   if (!ok(nearResponse)) {
     throw new Error(`WeatherXM stations/near failed: status ${nearResponse.statusCode}`);
   }
-  const stations = json(nearResponse);
-  if (!stations || stations.length === 0) {
+  const nearData = json(nearResponse);
+  const stations = nearData?.stations ?? nearData;
+  if (!stations || !Array.isArray(stations) || stations.length === 0) {
     throw new Error(`No WeatherXM stations found within 10km of ${lat},${lon}`);
   }
   const stationId = stations[0].id;
@@ -15860,20 +15888,20 @@ function fetchWeatherData(sendRequester, config, apiKey, lat, lon) {
   };
 }
 function fetchOAuthToken(sendRequester, tokenUrl, clientId, clientSecret) {
-  const response = sendRequester.sendRequests({
-    input: {
-      requests: [
-        {
-          url: tokenUrl,
-          method: "POST",
-          headers: ["Content-Type: application/x-www-form-urlencoded"],
-          body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`
-        }
-      ]
-    }
+  const bodyStr = `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`;
+  const bodyBase64 = toBase64(bodyStr);
+  const response = sendRequester.sendRequest({
+    url: tokenUrl,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: bodyBase64
   }).result();
-  const responseBody = response.responses[0]?.body;
-  const data = JSON.parse(new TextDecoder().decode(responseBody));
+  if (!ok(response)) {
+    throw new Error(`OAuth token request failed: status ${response.statusCode}`);
+  }
+  const data = json(response);
   return data.access_token;
 }
 function fetchNdviFromSentinelHub(sendRequester, apiUrl, token, dataType, evalscript, useCloudFilter, lat, lon) {
@@ -15911,6 +15939,8 @@ function fetchNdviFromSentinelHub(sendRequester, apiUrl, token, dataType, evalsc
       responses: [{ identifier: "ndvi" }]
     }
   };
+  const bodyStr = JSON.stringify(payload);
+  const bodyBase64 = toBase64(bodyStr);
   const response = sendRequester.sendRequest({
     url: `${apiUrl}/statistics`,
     method: "POST",
@@ -15918,7 +15948,7 @@ function fetchNdviFromSentinelHub(sendRequester, apiUrl, token, dataType, evalsc
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(payload)
+    body: bodyBase64
   }).result();
   if (!ok(response)) {
     throw new Error(`Sentinel Hub Statistical API failed: status ${response.statusCode}`);
@@ -15979,7 +16009,6 @@ var onCronTrigger = (runtime2, _payload) => {
   const backendApiKey = runtime2.getSecret({ id: "BACKEND_API_KEY" }).result().value;
   const weatherApiKey = runtime2.getSecret({ id: "WEATHERXM_API_KEY" }).result().value;
   const httpClient = new cre.capabilities.HTTPClient;
-  const confidentialClient = new cre.capabilities.ConfidentialHTTPClient;
   const policiesFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchActivePolicies(sendRequester, config, backendApiKey), consensusIdenticalAggregation());
   const policies = policiesFetcher().result();
   if (policies.length === 0) {
@@ -15995,7 +16024,7 @@ var onCronTrigger = (runtime2, _payload) => {
   if (config.satelliteProvider === "planet") {
     const clientId = runtime2.getSecret({ id: "PLANET_CLIENT_ID" }).result().value;
     const clientSecret = runtime2.getSecret({ id: "PLANET_CLIENT_SECRET" }).result().value;
-    const tokenFetcher = confidentialClient.sendRequests(runtime2, (sendRequester) => fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret), consensusIdenticalAggregation());
+    const tokenFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret), consensusIdenticalAggregation());
     satelliteToken = tokenFetcher().result();
     satelliteApiUrl = config.planetApiUrl;
     satelliteDataType = config.planetDataType;
@@ -16004,7 +16033,7 @@ var onCronTrigger = (runtime2, _payload) => {
   } else {
     const clientId = runtime2.getSecret({ id: "SENTINEL_CLIENT_ID" }).result().value;
     const clientSecret = runtime2.getSecret({ id: "SENTINEL_CLIENT_SECRET" }).result().value;
-    const tokenFetcher = confidentialClient.sendRequests(runtime2, (sendRequester) => fetchOAuthToken(sendRequester, COPERNICUS_OAUTH_URL, clientId, clientSecret), consensusIdenticalAggregation());
+    const tokenFetcher = httpClient.sendRequest(runtime2, (sendRequester) => fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret), consensusIdenticalAggregation());
     satelliteToken = tokenFetcher().result();
     satelliteApiUrl = config.sentinelApiUrl;
     satelliteDataType = "sentinel-2-l2a";

@@ -4,7 +4,6 @@ import {
   type Runtime,
   type CronPayload,
   type HTTPSendRequester,
-  type ConfidentialHTTPSendRequester,
   TxStatus,
 } from "@chainlink/cre-sdk";
 import {
@@ -18,6 +17,25 @@ import { json, ok } from "@chainlink/cre-sdk";
 import { encodeFunctionData } from "viem";
 import { z } from "zod";
 import { PayoutReceiverABI } from "./contracts/abi";
+
+// ---------------------------------------------------------------------------
+// Base64 Encoding (CRE runtime doesn't have btoa)
+// ---------------------------------------------------------------------------
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function toBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let result = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    result += BASE64_CHARS[(b0 >> 2) & 0x3f];
+    result += BASE64_CHARS[((b0 << 4) | (b1 >> 4)) & 0x3f];
+    result += i + 1 < bytes.length ? BASE64_CHARS[((b1 << 2) | (b2 >> 6)) & 0x3f] : "=";
+    result += i + 2 < bytes.length ? BASE64_CHARS[b2 & 0x3f] : "=";
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // OAuth Token Endpoints
@@ -36,14 +54,17 @@ const SENTINEL2_NDVI_EVALSCRIPT = `
 //VERSION=3
 function setup() {
   return {
-    input: [{ bands: ["B04", "B08", "dataMask"], units: "DN" }],
-    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+    input: [{ bands: ["B04", "B08", "dataMask"] }],
+    output: [
+      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 }
+    ]
   };
 }
 function evaluatePixel(sample) {
-  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  if (sample.dataMask === 0) return { ndvi: [NaN], dataMask: [0] };
   const ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-  return { ndvi: [ndvi] };
+  return { ndvi: [ndvi], dataMask: [1] };
 }`.trim();
 
 // PlanetScope SuperDove 8-band: red (band 6), nir (band 8)
@@ -52,14 +73,17 @@ const PLANETSCOPE_NDVI_EVALSCRIPT = `
 //VERSION=3
 function setup() {
   return {
-    input: [{ bands: ["red", "nir", "dataMask"], units: "DN" }],
-    output: [{ id: "ndvi", bands: 1, sampleType: "FLOAT32" }],
+    input: [{ bands: ["red", "nir", "dataMask"] }],
+    output: [
+      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 }
+    ]
   };
 }
 function evaluatePixel(sample) {
-  if (sample.dataMask === 0) return { ndvi: [NaN] };
+  if (sample.dataMask === 0) return { ndvi: [NaN], dataMask: [0] };
   const ndvi = (sample.nir - sample.red) / (sample.nir + sample.red);
-  return { ndvi: [ndvi] };
+  return { ndvi: [ndvi], dataMask: [1] };
 }`.trim();
 
 // ---------------------------------------------------------------------------
@@ -93,7 +117,6 @@ interface ActivePolicy {
   cropType: string;
   onChainPolicyId: string;
   sumInsured: number;
-  farmerWallet: string | null;
 }
 
 interface WeatherData {
@@ -182,8 +205,15 @@ function fetchActivePolicies(
     throw new Error(`Failed to fetch active policies: status ${response.statusCode}`);
   }
 
-  const data = json(response) as { policies: ActivePolicy[] };
-  return data.policies;
+  const data = json(response) as { policies: any[] };
+  return data.policies.map((p) => ({
+    policyId: p.policyId as string,
+    plotLatitude: p.plotLatitude as number,
+    plotLongitude: p.plotLongitude as number,
+    cropType: p.cropType as string,
+    onChainPolicyId: p.onChainPolicyId as string,
+    sumInsured: p.sumInsured as number,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -207,8 +237,9 @@ function fetchWeatherData(
     throw new Error(`WeatherXM stations/near failed: status ${nearResponse.statusCode}`);
   }
 
-  const stations = json(nearResponse) as any[];
-  if (!stations || stations.length === 0) {
+  const nearData = json(nearResponse) as any;
+  const stations = nearData?.stations ?? nearData;
+  if (!stations || !Array.isArray(stations) || stations.length === 0) {
     throw new Error(`No WeatherXM stations found within 10km of ${lat},${lon}`);
   }
 
@@ -242,28 +273,31 @@ function fetchWeatherData(
 
 // ---------------------------------------------------------------------------
 // Fetch OAuth Token (shared by both satellite providers)
+// Uses standard HTTP client — secrets are already resolved by the runtime
 // ---------------------------------------------------------------------------
 function fetchOAuthToken(
-  sendRequester: ConfidentialHTTPSendRequester,
+  sendRequester: HTTPSendRequester,
   tokenUrl: string,
   clientId: string,
   clientSecret: string
 ): string {
-  const response = sendRequester.sendRequests({
-    input: {
-      requests: [
-        {
-          url: tokenUrl,
-          method: "POST",
-          headers: ["Content-Type: application/x-www-form-urlencoded"],
-          body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`,
-        },
-      ],
+  const bodyStr = `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`;
+  const bodyBase64 = toBase64(bodyStr);
+
+  const response = sendRequester.sendRequest({
+    url: tokenUrl,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
     },
+    body: bodyBase64,
   }).result();
 
-  const responseBody = response.responses[0]?.body;
-  const data = JSON.parse(new TextDecoder().decode(responseBody)) as any;
+  if (!ok(response)) {
+    throw new Error(`OAuth token request failed: status ${response.statusCode}`);
+  }
+
+  const data = json(response) as any;
   return data.access_token as string;
 }
 
@@ -321,6 +355,9 @@ function fetchNdviFromSentinelHub(
     },
   };
 
+  const bodyStr = JSON.stringify(payload);
+  const bodyBase64 = toBase64(bodyStr);
+
   const response = sendRequester.sendRequest({
     url: `${apiUrl}/statistics`,
     method: "POST",
@@ -328,7 +365,7 @@ function fetchNdviFromSentinelHub(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    body: bodyBase64,
   }).result();
 
   if (!ok(response)) {
@@ -450,9 +487,8 @@ const onCronTrigger = (
   const backendApiKey = runtime.getSecret({ id: "BACKEND_API_KEY" }).result().value;
   const weatherApiKey = runtime.getSecret({ id: "WEATHERXM_API_KEY" }).result().value;
 
-  // Set up HTTP clients
+  // Set up HTTP client
   const httpClient = new cre.capabilities.HTTPClient();
-  const confidentialClient = new cre.capabilities.ConfidentialHTTPClient();
 
   // Fetch active policies via consensus (all nodes must agree on the list)
   // Type assertion needed because ActivePolicy[] is a complex object array
@@ -483,9 +519,9 @@ const onCronTrigger = (
     const clientId = runtime.getSecret({ id: "PLANET_CLIENT_ID" }).result().value;
     const clientSecret = runtime.getSecret({ id: "PLANET_CLIENT_SECRET" }).result().value;
 
-    const tokenFetcher = confidentialClient.sendRequests(
+    const tokenFetcher = httpClient.sendRequest(
       runtime,
-      (sendRequester: ConfidentialHTTPSendRequester) =>
+      (sendRequester: HTTPSendRequester) =>
         fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret),
       consensusIdenticalAggregation<string>()
     );
@@ -495,14 +531,14 @@ const onCronTrigger = (
     satelliteEvalscript = PLANETSCOPE_NDVI_EVALSCRIPT;
     useCloudFilter = false; // Not available for PlanetScope
   } else {
-    // Sentinel-2 via Copernicus Data Space
+    // Sentinel-2 via Sentinel Hub (uses same OAuth as PlanetScope)
     const clientId = runtime.getSecret({ id: "SENTINEL_CLIENT_ID" }).result().value;
     const clientSecret = runtime.getSecret({ id: "SENTINEL_CLIENT_SECRET" }).result().value;
 
-    const tokenFetcher = confidentialClient.sendRequests(
+    const tokenFetcher = httpClient.sendRequest(
       runtime,
-      (sendRequester: ConfidentialHTTPSendRequester) =>
-        fetchOAuthToken(sendRequester, COPERNICUS_OAUTH_URL, clientId, clientSecret),
+      (sendRequester: HTTPSendRequester) =>
+        fetchOAuthToken(sendRequester, SENTINEL_HUB_OAUTH_URL, clientId, clientSecret),
       consensusIdenticalAggregation<string>()
     );
     satelliteToken = tokenFetcher().result();
