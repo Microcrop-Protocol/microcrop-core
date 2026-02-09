@@ -1,7 +1,10 @@
+import crypto from 'crypto';
 import prisma from '../config/database.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { env } from '../config/env.js';
+import logger from '../utils/logger.js';
+import emailService from './email.service.js';
 import { ConflictError, NotFoundError, UnauthorizedError } from '../utils/errors.js';
 
 function excludePassword(user) {
@@ -117,6 +120,60 @@ export const authService = {
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
 
     return { accessToken, refreshToken: newRefreshToken };
+  },
+
+  async forgotPassword(email) {
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (user) {
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          resetToken: hashedToken,
+          resetTokenExpiry: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        },
+      });
+
+      emailService.sendPasswordReset(email, rawToken).catch((err) =>
+        logger.error('Failed to send password reset email', { email, error: err.message })
+      );
+    }
+
+    // Always return same response to prevent email enumeration
+    return { message: 'If an account exists with that email, a reset link has been sent' };
+  },
+
+  async resetPassword(token, newPassword) {
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const user = await prisma.user.findFirst({
+      where: {
+        resetToken: hashedToken,
+        resetTokenExpiry: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundError('Invalid or expired reset token');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          password: hashedPassword,
+          resetToken: null,
+          resetTokenExpiry: null,
+        },
+      });
+    });
+
+    return { message: 'Password reset successful' };
   },
 
   async getMe(userId) {
