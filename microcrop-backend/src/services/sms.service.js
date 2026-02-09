@@ -19,6 +19,7 @@ const smsService = {
         'https://api.africastalking.com/version1/messaging',
         params.toString(),
         {
+          timeout: 10000,
           headers: {
             apiKey: env.atApiKey,
             'Content-Type': 'application/x-www-form-urlencoded',
