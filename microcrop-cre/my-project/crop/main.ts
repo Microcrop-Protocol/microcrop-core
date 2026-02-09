@@ -53,10 +53,10 @@ interface ActivePolicy {
 }
 
 interface WeatherData {
-  temperature: number;
-  precipitation: number;
-  humidity: number;
-  windSpeed: number;
+  temperature: number; // °C
+  precipitation: number; // mm/h (rate from WeatherXM)
+  humidity: number; // % relative humidity
+  windSpeed: number; // km/h (converted from m/s)
 }
 
 interface SatelliteData {
@@ -78,10 +78,10 @@ function calculateWeatherDamage(weather: WeatherData): number {
     damage += 10;
   }
 
-  // Excessive precipitation (flooding): >50mm/day is damaging
-  if (weather.precipitation > 100) {
+  // Precipitation rate: >4 mm/h is heavy rain, >10 mm/h is torrential/flooding risk
+  if (weather.precipitation > 10) {
     damage += 30;
-  } else if (weather.precipitation > 50) {
+  } else if (weather.precipitation > 4) {
     damage += 15;
   }
 
@@ -143,7 +143,7 @@ function fetchActivePolicies(
 }
 
 // ---------------------------------------------------------------------------
-// Fetch Weather Data (WeatherXM)
+// Fetch Weather Data (WeatherXM Pro API)
 // ---------------------------------------------------------------------------
 function fetchWeatherData(
   sendRequester: HTTPSendRequester,
@@ -152,25 +152,47 @@ function fetchWeatherData(
   lat: number,
   lon: number
 ): WeatherData {
-  const response = sendRequester.sendRequest({
-    url: `${config.weatherXmApiUrl}/cells/search?lat=${lat}&lon=${lon}&exact=true`,
+  // Step 1: Find nearest station within 10km radius
+  const nearResponse = sendRequester.sendRequest({
+    url: `${config.weatherXmApiUrl}/stations/near?lat=${lat}&lon=${lon}&radius=10000`,
     method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { "X-API-KEY": apiKey },
   }).result();
 
-  if (!ok(response)) {
-    throw new Error(`WeatherXM API failed: status ${response.statusCode}`);
+  if (!ok(nearResponse)) {
+    throw new Error(`WeatherXM stations/near failed: status ${nearResponse.statusCode}`);
   }
 
-  const data = json(response) as any;
+  const stations = json(nearResponse) as any[];
+  if (!stations || stations.length === 0) {
+    throw new Error(`No WeatherXM stations found within 10km of ${lat},${lon}`);
+  }
 
-  // Extract current weather from WeatherXM response
-  const current = data?.devices?.[0]?.current_weather ?? data;
+  const stationId = stations[0].id;
+
+  // Step 2: Get latest observation from nearest station
+  const latestResponse = sendRequester.sendRequest({
+    url: `${config.weatherXmApiUrl}/stations/${stationId}/latest`,
+    method: "GET",
+    headers: { "X-API-KEY": apiKey },
+  }).result();
+
+  if (!ok(latestResponse)) {
+    throw new Error(`WeatherXM latest observation failed: status ${latestResponse.statusCode}`);
+  }
+
+  const data = json(latestResponse) as any;
+  const obs = data?.observation;
+
+  if (!obs) {
+    throw new Error(`No observation data for station ${stationId}`);
+  }
+
   return {
-    temperature: current.temperature ?? 25,
-    precipitation: current.precipitation ?? 0,
-    humidity: current.humidity ?? 50,
-    windSpeed: current.wind_speed ?? 0,
+    temperature: obs.temperature ?? 25,
+    precipitation: obs.precipitation_rate ?? 0, // mm/h
+    humidity: obs.humidity ?? 50,
+    windSpeed: (obs.wind_speed ?? 0) * 3.6, // Convert m/s → km/h
   };
 }
 
@@ -342,16 +364,23 @@ function evaluatePixel(sample) {
 
 // ---------------------------------------------------------------------------
 // Calculate Damage Index
+// Uses Math.floor to match Solidity's integer truncation behavior.
+// Contract formula: (WEATHER_WEIGHT * weatherDamage + SATELLITE_WEIGHT * satelliteDamage) / 100
+// where WEATHER_WEIGHT=60, SATELLITE_WEIGHT=40
 // ---------------------------------------------------------------------------
 function calculateDamageIndex(
   weatherDamage: number,
   satelliteDamage: number,
   config: Config
 ): number {
-  const combined =
-    config.weatherWeight * weatherDamage +
-    config.satelliteWeight * satelliteDamage;
-  return Math.round(Math.min(combined, 100));
+  // Use integer math matching the on-chain calculation:
+  // (60 * weatherDamage + 40 * satelliteDamage) / 100
+  const weatherWeightInt = Math.round(config.weatherWeight * 100);
+  const satelliteWeightInt = Math.round(config.satelliteWeight * 100);
+  const combined = Math.floor(
+    (weatherWeightInt * weatherDamage + satelliteWeightInt * satelliteDamage) / 100
+  );
+  return Math.min(combined, 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +390,10 @@ function submitDamageReport(
   runtime: Runtime<Config>,
   config: Config,
   onChainPolicyId: string,
-  damagePercent: number
+  damagePercent: number,
+  weatherDamage: number,
+  satelliteDamage: number,
+  sumInsured: number
 ): void {
   const network = getNetwork({ chainSelectorName: config.chainSelectorName });
   if (!network) {
@@ -370,14 +402,31 @@ function submitDamageReport(
 
   const evmClient = new cre.capabilities.EVMClient(network.chainSelector.selector);
 
-  // Encode the contract call
+  // Get workflow identity for Keystone verification
+  const workflowAddress = runtime.getSecret({ id: "WORKFLOW_ADDRESS" }).result().value;
+  const workflowId = runtime.getSecret({ id: "WORKFLOW_ID" }).result().value;
+
+  // Calculate payout in USDC (6 decimals) matching Solidity integer math:
+  // payoutAmount = sumInsured_onchain * damagePercentage / 100
+  const sumInsuredOnChain = BigInt(Math.round(sumInsured * 1e6));
+  const payoutAmount = sumInsuredOnChain * BigInt(damagePercent) / BigInt(100);
+  const assessedAt = BigInt(Math.floor(Date.now() / 1000));
+
+  // Encode the contract call matching receiveDamageReport(DamageReport, address, uint256)
   const callData = encodeFunctionData({
     abi: PayoutReceiverABI,
-    functionName: "submitDamageReport",
+    functionName: "receiveDamageReport",
     args: [
-      BigInt(onChainPolicyId),
-      BigInt(damagePercent),
-      "0x" as `0x${string}`, // proof bytes (DON signature serves as proof)
+      {
+        policyId: BigInt(onChainPolicyId),
+        damagePercentage: BigInt(damagePercent),
+        weatherDamage: BigInt(weatherDamage),
+        satelliteDamage: BigInt(satelliteDamage),
+        payoutAmount: payoutAmount,
+        assessedAt: assessedAt,
+      },
+      workflowAddress as `0x${string}`,
+      BigInt(workflowId),
     ],
   });
 
@@ -386,7 +435,7 @@ function submitDamageReport(
     prepareReportRequest(callData)
   ).result();
 
-  // Write report to chain
+  // Write report to chain via Keystone forwarder
   const writeResult = evmClient.writeReport(runtime, {
     receiver: config.payoutReceiverAddress,
     report: report,
@@ -403,7 +452,7 @@ function submitDamageReport(
     ? Array.from(writeResult.txHash).map(b => b.toString(16).padStart(2, '0')).join('')
     : "unknown";
   runtime.log(
-    `Damage report submitted for policy ${onChainPolicyId}: ${damagePercent}% damage, tx: 0x${txHashHex}`
+    `Damage report submitted for policy ${onChainPolicyId}: ${damagePercent}% damage, payout: ${payoutAmount.toString()} USDC, tx: 0x${txHashHex}`
   );
 }
 
@@ -507,7 +556,7 @@ const onCronTrigger = (
       satelliteData = satFetcher().result();
     }
 
-    // Calculate damage
+    // Calculate damage scores
     const weatherDamage = calculateWeatherDamage(weatherData);
     const satelliteDamage = calculateSatelliteDamage(satelliteData);
     const combinedDamage = calculateDamageIndex(weatherDamage, satelliteDamage, config);
@@ -521,7 +570,10 @@ const onCronTrigger = (
       runtime.log(
         `Policy ${policy.policyId}: damage ${combinedDamage}% >= threshold ${config.damageThreshold}%, submitting report.`
       );
-      submitDamageReport(runtime, config, policy.onChainPolicyId, combinedDamage);
+      submitDamageReport(
+        runtime, config, policy.onChainPolicyId, combinedDamage,
+        weatherDamage, satelliteDamage, policy.sumInsured
+      );
       reportsSubmitted++;
     }
   }
