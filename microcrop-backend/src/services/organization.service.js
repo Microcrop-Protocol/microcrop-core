@@ -3,6 +3,8 @@ import bcrypt from 'bcrypt';
 import { generateApiKey, generateApiSecret, paginate } from '../utils/helpers.js';
 import { NotFoundError, ConflictError, ValidationError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
+import * as poolWriter from '../blockchain/writers/pool.writer.js';
+import * as poolReader from '../blockchain/readers/pool.reader.js';
 
 const organizationService = {
   async registerOrganization(data) {
@@ -31,24 +33,335 @@ const organizationService = {
     }
   },
 
-  async deployPool(orgId, initialCapital) {
+  async deployPool(orgId, poolConfig) {
     try {
       const org = await prisma.organization.findUnique({ where: { id: orgId } });
       if (!org) {
         throw new NotFoundError('Organization not found');
       }
 
-      // Blockchain integration will be added later.
-      // In production, this calls riskPoolFactory.deployPool().
-      logger.info('Pool deployment would happen here', { orgId, initialCapital });
+      if (org.poolAddress) {
+        throw new ConflictError('Organization already has a deployed pool');
+      }
+
+      // Validate required config
+      const {
+        name = `${org.name} Risk Pool`,
+        symbol = 'MCPOOL',
+        coverageType = 4, // COMPREHENSIVE
+        region = 'Africa',
+        poolType = 'PRIVATE',
+        minDeposit = 100,
+        maxDeposit = 1000000,
+        targetCapital,
+        maxCapital,
+        memberContribution,
+      } = poolConfig;
+
+      if (!targetCapital) {
+        throw new ValidationError('targetCapital is required');
+      }
+
+      const poolOwner = org.walletAddress || poolConfig.poolOwner;
+      if (!poolOwner) {
+        throw new ValidationError('Organization wallet address or poolOwner is required');
+      }
+
+      let result;
+
+      // Deploy based on pool type
+      if (poolType === 'PUBLIC') {
+        result = await poolWriter.createPublicPool({
+          name,
+          symbol,
+          coverageType,
+          region,
+          targetCapital,
+          maxCapital: maxCapital || targetCapital * 2,
+        });
+      } else if (poolType === 'MUTUAL') {
+        if (!memberContribution) {
+          throw new ValidationError('memberContribution is required for mutual pools');
+        }
+        result = await poolWriter.createMutualPool({
+          name,
+          symbol,
+          coverageType,
+          region,
+          poolOwner,
+          memberContribution,
+          targetCapital,
+          maxCapital: maxCapital || targetCapital * 2,
+        });
+      } else {
+        // Default to PRIVATE pool
+        result = await poolWriter.createPrivatePool({
+          name,
+          symbol,
+          coverageType,
+          region,
+          poolOwner,
+          minDeposit,
+          maxDeposit,
+          targetCapital,
+          maxCapital: maxCapital || targetCapital * 2,
+        });
+      }
+
+      // Update organization with pool address
+      const updated = await prisma.organization.update({
+        where: { id: orgId },
+        data: {
+          poolAddress: result.poolAddress,
+          poolDeployedAt: new Date(),
+        },
+      });
+
+      logger.info('Pool deployed for organization', {
+        orgId,
+        poolAddress: result.poolAddress,
+        poolId: result.poolId,
+        txHash: result.txHash,
+      });
 
       return {
-        message: 'Pool deployment initiated',
-        orgId,
-        initialCapital,
+        organization: updated,
+        pool: result,
       };
     } catch (error) {
       logger.error('Failed to deploy pool', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async depositToPool(orgId, amount, investorAddress) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const result = await poolWriter.depositToPool(org.poolAddress, amount, 0);
+
+      // Update organization totals
+      await prisma.organization.update({
+        where: { id: orgId },
+        data: {
+          totalCapitalDeposited: {
+            increment: parseFloat(amount),
+          },
+        },
+      });
+
+      logger.info('Deposit to pool successful', {
+        orgId,
+        poolAddress: org.poolAddress,
+        amount,
+        txHash: result.txHash,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to deposit to pool', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async withdrawFromPool(orgId, tokenAmount) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const result = await poolWriter.withdrawFromPool(org.poolAddress, tokenAmount, 0);
+
+      logger.info('Withdrawal from pool successful', {
+        orgId,
+        poolAddress: org.poolAddress,
+        tokenAmount,
+        usdcReceived: result.usdcReceived,
+        txHash: result.txHash,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to withdraw from pool', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async addPoolDepositor(orgId, depositorAddress) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const result = await poolWriter.addDepositor(org.poolAddress, depositorAddress);
+
+      logger.info('Depositor added to pool', {
+        orgId,
+        poolAddress: org.poolAddress,
+        depositorAddress,
+        txHash: result.txHash,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to add depositor', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async removePoolDepositor(orgId, depositorAddress) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const result = await poolWriter.removeDepositor(org.poolAddress, depositorAddress);
+
+      logger.info('Depositor removed from pool', {
+        orgId,
+        poolAddress: org.poolAddress,
+        depositorAddress,
+        txHash: result.txHash,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to remove depositor', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async setPoolDepositsOpen(orgId, open) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const result = await poolWriter.setDepositsOpen(org.poolAddress, open);
+
+      logger.info('Pool deposits status updated', {
+        orgId,
+        poolAddress: org.poolAddress,
+        depositsOpen: open,
+        txHash: result.txHash,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to set deposits open', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async setPoolWithdrawalsOpen(orgId, open) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const result = await poolWriter.setWithdrawalsOpen(org.poolAddress, open);
+
+      logger.info('Pool withdrawals status updated', {
+        orgId,
+        poolAddress: org.poolAddress,
+        withdrawalsOpen: open,
+        txHash: result.txHash,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to set withdrawals open', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async getPoolDetails(orgId) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        // Return empty pool details instead of error
+        return {
+          poolAddress: null,
+          poolDeployed: false,
+          message: 'Organization does not have a deployed pool yet',
+          organizationId: orgId,
+          organizationName: org.name,
+          poolValue: '0',
+          totalSupply: '0',
+          tokenPrice: '1.00',
+          totalPremiums: '0',
+          totalPayouts: '0',
+          activeExposure: '0',
+          utilizationRate: 0,
+        };
+      }
+
+      const details = await poolReader.getFullPoolDetails(org.poolAddress);
+
+      return {
+        ...details,
+        poolDeployed: true,
+        organizationId: orgId,
+        organizationName: org.name,
+      };
+    } catch (error) {
+      logger.error('Failed to get pool details', { orgId, error: error.message });
+      throw error;
+    }
+  },
+
+  async getPoolInvestorInfo(orgId, investorAddress) {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        throw new NotFoundError('Organization not found');
+      }
+
+      if (!org.poolAddress) {
+        throw new ValidationError('Organization does not have a deployed pool');
+      }
+
+      const info = await poolReader.getInvestorInfo(org.poolAddress, investorAddress);
+
+      return info;
+    } catch (error) {
+      logger.error('Failed to get investor info', { orgId, error: error.message });
       throw error;
     }
   },
@@ -265,31 +578,84 @@ const organizationService = {
 
   async getPoolStatus(organizationId) {
     try {
+      logger.debug('Getting pool status', { organizationId });
+
       const org = await prisma.organization.findUnique({
         where: { id: organizationId },
       });
 
       if (!org) {
+        logger.warn('Organization not found for pool status', { organizationId });
         throw new NotFoundError('Organization not found');
       }
 
+      logger.debug('Organization found', { organizationId, poolAddress: org.poolAddress });
+
       if (!org.poolAddress) {
-        throw new ValidationError('Organization does not have a deployed pool');
+        logger.info('Organization does not have a deployed pool', { organizationId });
+        // Return empty pool status instead of error
+        return {
+          poolAddress: null,
+          poolDeployed: false,
+          message: 'Organization does not have a deployed pool yet',
+          poolValue: '0',
+          totalSupply: '0',
+          tokenPrice: '1.00',
+          totalPremiums: '0',
+          totalPayouts: '0',
+          activeExposure: '0',
+          utilizationRate: 0,
+        };
       }
 
-      return {
-        poolAddress: org.poolAddress,
-        balance: org.totalCapitalDeposited || 0,
-        totalCapitalDeposited: org.totalCapitalDeposited || 0,
-        totalPremiumsReceived: org.totalPremiumsReceived || 0,
-        totalPayoutsSent: org.totalPayoutsSent || 0,
-        totalFeesPaid: org.totalFeesPaid || 0,
-        utilizationRate: org.totalCapitalDeposited
-          ? parseFloat(
-              (((org.totalPayoutsSent || 0) / org.totalCapitalDeposited) * 100).toFixed(2)
-            )
-          : 0,
-      };
+      // Try to get on-chain data, fallback to database
+      try {
+        const [summary, config] = await Promise.all([
+          poolReader.getPoolSummary(org.poolAddress),
+          poolReader.getPoolConfig(org.poolAddress),
+        ]);
+
+        return {
+          poolAddress: org.poolAddress,
+          // On-chain data
+          poolValue: summary.poolValue,
+          totalSupply: summary.totalSupply,
+          tokenPrice: summary.tokenPrice,
+          totalPremiums: summary.totalPremiums,
+          totalPayouts: summary.totalPayouts,
+          activeExposure: summary.activeExposure,
+          // Config
+          minDeposit: config.minDeposit,
+          maxDeposit: config.maxDeposit,
+          targetCapital: config.targetCapital,
+          maxCapital: config.maxCapital,
+          depositsOpen: config.depositsOpen,
+          withdrawalsOpen: config.withdrawalsOpen,
+          paused: config.paused,
+          // Calculated
+          utilizationRate: parseFloat(config.targetCapital) > 0
+            ? (parseFloat(summary.activeExposure) / parseFloat(config.targetCapital)) * 100
+            : 0,
+          // Database totals (for historical reference)
+          dbTotalCapitalDeposited: org.totalCapitalDeposited || 0,
+          dbTotalPremiumsReceived: org.totalPremiumsReceived || 0,
+          dbTotalPayoutsSent: org.totalPayoutsSent || 0,
+        };
+      } catch {
+        // Fallback to database if blockchain call fails
+        logger.warn('Failed to read on-chain pool data, using database', { organizationId });
+        return {
+          poolAddress: org.poolAddress,
+          poolValue: String(org.totalCapitalDeposited || 0),
+          totalPremiums: String(org.totalPremiumsReceived || 0),
+          totalPayouts: String(org.totalPayoutsSent || 0),
+          utilizationRate: org.totalCapitalDeposited
+            ? parseFloat(
+                (((org.totalPayoutsSent || 0) / org.totalCapitalDeposited) * 100).toFixed(2)
+              )
+            : 0,
+        };
+      }
     } catch (error) {
       logger.error('Failed to get pool status', { organizationId, error: error.message });
       throw error;
