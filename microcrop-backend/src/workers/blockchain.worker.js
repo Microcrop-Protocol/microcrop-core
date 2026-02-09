@@ -50,6 +50,14 @@ export function startBlockchainRetryWorker() {
     });
   });
 
+  blockchainRetryQueue.on('stalled', (job) => {
+    logger.warn('Blockchain retry job stalled', {
+      jobId: job.id,
+      type: job.data?.type,
+      policyId: job.data?.policyId,
+    });
+  });
+
   logger.info('Blockchain retry worker started');
 }
 
