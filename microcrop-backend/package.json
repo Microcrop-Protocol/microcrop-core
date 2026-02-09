@@ -4,6 +4,9 @@
   "description": "MicroCrop B2B parametric crop insurance infrastructure backend",
   "type": "module",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
