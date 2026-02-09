@@ -15,7 +15,12 @@ function getUsdcAddress() {
 }
 
 export function startPayoutWorker() {
-  payoutQueue = new Bull(PAYOUT_QUEUE_NAME, env.redisUrl);
+  payoutQueue = new Bull(PAYOUT_QUEUE_NAME, env.redisUrl, {
+    defaultJobOptions: {
+      removeOnComplete: 50,
+      removeOnFail: false,
+    },
+  });
 
   payoutQueue.process(async (job) => {
     const { payoutId, phoneNumber, amountUSDC, policyId, organizationId } = job.data;
@@ -261,6 +266,13 @@ export function startPayoutWorker() {
     logger.info('Payout job completed', {
       jobId: job.id,
       payoutId: job.data.payoutId,
+    });
+  });
+
+  payoutQueue.on('stalled', (job) => {
+    logger.warn('Payout job stalled', {
+      jobId: job.id,
+      payoutId: job.data?.payoutId,
     });
   });
 
