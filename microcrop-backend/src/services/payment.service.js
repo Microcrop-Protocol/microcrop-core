@@ -1,6 +1,7 @@
 import prisma from '../config/database.js';
 import paymentProviderService, { PROVIDERS } from './payment-provider.service.js';
 import { createPolicyOnChain } from '../blockchain/writers/policy.writer.js';
+import { addBlockchainRetryJob } from '../workers/blockchain.worker.js';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
@@ -314,6 +315,14 @@ const paymentService = {
               premiumTxHash: webhookData.mpesaRef,
             },
           });
+
+          // Queue automatic retry for on-chain policy creation
+          addBlockchainRetryJob({
+            type: 'CREATE_POLICY',
+            policyId: transaction.policyId,
+          }).catch((retryErr) =>
+            logger.error('Failed to queue blockchain retry', { error: retryErr.message })
+          );
         }
       }
     } else if (webhookData.status === 'FAILED') {
