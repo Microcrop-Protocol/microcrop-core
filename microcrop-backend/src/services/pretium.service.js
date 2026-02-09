@@ -5,6 +5,7 @@ import { PaymentError } from '../utils/errors.js';
 
 const pretiumClient = axios.create({
   baseURL: env.pretiumApiUrl,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
     'x-api-key': env.pretiumApiKey,
