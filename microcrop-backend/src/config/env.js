@@ -82,6 +82,16 @@ export const env = {
   // Internal API (CRE workflow)
   internalApiKey: optional('INTERNAL_API_KEY', ''),
 
+  // Email (SMTP via Nodemailer)
+  smtpHost: optional('SMTP_HOST', ''),
+  smtpPort: parseInt(optional('SMTP_PORT', '587'), 10),
+  smtpUser: optional('SMTP_USER', ''),
+  smtpPass: optional('SMTP_PASS', ''),
+  emailFrom: optional('EMAIL_FROM', 'noreply@microcrop.app'),
+
+  // Frontend
+  frontendUrl: optional('FRONTEND_URL', 'https://network.microcrop.app'),
+
   // Optional APIs
   weatherxmApiKey: optional('WEATHERXM_API_KEY', ''),
   weatherxmApiUrl: optional('WEATHERXM_API_URL', 'https://api.weatherxm.com/v1'),
