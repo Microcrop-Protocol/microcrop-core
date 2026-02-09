@@ -84,7 +84,7 @@ export async function withdrawToEscrow(tokenAddress, amount) {
       });
 
       const approveTx = await usdc.approve(env.swyptContractAddress, amountWei);
-      await approveTx.wait();
+      await approveTx.wait(1, 120000);
 
       logger.info('USDC approval confirmed', { txHash: approveTx.hash });
     }
@@ -93,7 +93,7 @@ export async function withdrawToEscrow(tokenAddress, amount) {
     const tx = await swyptContract.withdrawToEscrow(tokenAddress, amountWei);
     logger.info('Swypt withdrawal transaction sent', { txHash: tx.hash });
 
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1, 120000);
 
     // Extract nonce from Withdrawal event
     let nonce = null;
@@ -159,7 +159,7 @@ export async function approveSwyptSpending(amount) {
     const amountWei = ethers.parseUnits(String(amount), USDC_DECIMALS);
 
     const tx = await usdc.approve(env.swyptContractAddress, amountWei);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1, 120000);
 
     logger.info('Swypt approval confirmed', {
       txHash: receipt.hash,
