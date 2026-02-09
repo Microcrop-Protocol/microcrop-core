@@ -1,54 +1,54 @@
-const stores = new Map();
+import redis from '../config/redis.js';
+import logger from '../utils/logger.js';
 
 function createLimiter({ windowMs, max, keyPrefix = 'global' }) {
-  return (req, res, next) => {
-    const key = `${keyPrefix}:${req.headers['x-api-key'] || req.ip}`;
-    const now = Date.now();
+  const windowSec = Math.ceil(windowMs / 1000);
 
-    if (!stores.has(key)) {
-      stores.set(key, { count: 0, resetAt: now + windowMs });
-    }
+  return async (req, res, next) => {
+    const identifier = req.headers['x-api-key'] || req.ip;
+    const key = `rate_limit:${keyPrefix}:${identifier}`;
 
-    const record = stores.get(key);
+    try {
+      const count = await redis.incr(key);
 
-    if (now > record.resetAt) {
-      record.count = 0;
-      record.resetAt = now + windowMs;
-    }
+      // Set TTL on first request in the window
+      if (count === 1) {
+        await redis.expire(key, windowSec);
+      }
 
-    record.count++;
+      // Get remaining TTL for headers
+      const ttl = await redis.ttl(key);
+      const resetAt = Math.ceil(Date.now() / 1000) + Math.max(ttl, 0);
 
-    res.set('X-RateLimit-Limit', String(max));
-    res.set('X-RateLimit-Remaining', String(Math.max(0, max - record.count)));
-    res.set('X-RateLimit-Reset', String(Math.ceil(record.resetAt / 1000)));
+      res.set('X-RateLimit-Limit', String(max));
+      res.set('X-RateLimit-Remaining', String(Math.max(0, max - count)));
+      res.set('X-RateLimit-Reset', String(resetAt));
 
-    if (record.count > max) {
-      return res.status(429).json({
-        success: false,
-        error: {
-          code: 'RATE_LIMIT_EXCEEDED',
-          message: 'Too many requests. Please try again later.',
-          details: {
-            limit: max,
-            retryAfter: Math.ceil((record.resetAt - now) / 1000),
+      if (count > max) {
+        return res.status(429).json({
+          success: false,
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message: 'Too many requests. Please try again later.',
+            details: {
+              limit: max,
+              retryAfter: Math.max(ttl, 1),
+            },
           },
-        },
-      });
-    }
+        });
+      }
 
-    next();
+      next();
+    } catch (err) {
+      // Fail open — if Redis is down, allow the request
+      logger.warn('Rate limiter Redis error, allowing request', {
+        key,
+        error: err.message,
+      });
+      next();
+    }
   };
 }
-
-// Periodic cleanup of expired entries
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, record] of stores) {
-    if (now > record.resetAt + 60000) {
-      stores.delete(key);
-    }
-  }
-}, 60000);
 
 export const authLimiter = createLimiter({
   windowMs: 5 * 60 * 1000, // 5 minutes
@@ -72,4 +72,10 @@ export const ussdLimiter = createLimiter({
   windowMs: 60 * 1000, // 1 minute
   max: 30,
   keyPrefix: 'ussd',
+});
+
+export const webhookLimiter = createLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60,
+  keyPrefix: 'webhook',
 });
