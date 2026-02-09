@@ -4,7 +4,7 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
 // Mask sensitive fields in log metadata
-const SENSITIVE_KEYS = ['phoneNumber', 'mpesaPhone', 'mpesaRef', 'nationalId', 'walletAddress'];
+const SENSITIVE_KEYS = ['phoneNumber', 'mpesaPhone', 'mpesaRef', 'nationalId', 'walletAddress', 'resetToken'];
 
 function maskValue(key, value) {
   if (!value || typeof value !== 'string') return value;
