@@ -73,7 +73,7 @@ export async function transferToSettlementWallet(amountUSDC, network = 'Base') {
     const tx = await usdc.transfer(settlementWallet, amountWei);
     logger.info('USDC transfer transaction sent', { txHash: tx.hash });
 
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1, 120000);
 
     logger.info('USDC transferred to Pretium settlement wallet', {
       txHash: receipt.hash,
