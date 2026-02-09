@@ -2,7 +2,7 @@ import prisma from '../config/database.js';
 import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
 import { normalizePhone, generatePolicyNumber } from '../utils/helpers.js';
-import { getDurationFactor, BASE_PREMIUM_RATE, PLATFORM_FEE_PERCENT, CROP_FACTORS } from '../utils/constants.js';
+import { getDurationFactor, BASE_PREMIUM_RATE, PLATFORM_FEE_PERCENT, CROP_FACTORS, MIN_SUM_INSURED, MAX_SUM_INSURED } from '../utils/constants.js';
 import paymentService from './payment.service.js';
 import { addNotificationJob } from '../workers/notification.worker.js';
 
@@ -154,19 +154,31 @@ const ussdService = {
   // ── Registration Flow ──────────────────────────────────────────────────
 
   async _handleRegisterName(session, input) {
-    session.data.name = input;
+    const name = (input || '').trim();
+    if (!name || name.length > 100) {
+      return 'END Invalid name. Please try again.';
+    }
+    session.data.name = name;
     session.state = 'REGISTER_ID';
     return 'CON Enter your National ID:';
   },
 
   async _handleRegisterId(session, input) {
-    session.data.nationalId = input;
+    const nationalId = (input || '').trim();
+    if (!nationalId || nationalId.length > 20 || !/^[a-zA-Z0-9]+$/.test(nationalId)) {
+      return 'END Invalid National ID. Use letters and numbers only.';
+    }
+    session.data.nationalId = nationalId;
     session.state = 'REGISTER_COUNTY';
     return 'CON Enter your county:';
   },
 
   async _handleRegisterCounty(session, input, organization, phoneNumber) {
-    session.data.county = input;
+    const county = (input || '').trim();
+    if (!county || county.length > 50 || !/^[a-zA-Z\s-]+$/.test(county)) {
+      return 'END Invalid county name.';
+    }
+    session.data.county = county;
 
     try {
       const nameParts = (session.data.name || '').split(' ');
@@ -247,8 +259,8 @@ const ussdService = {
 
   async _handleBuySum(session, input) {
     const sumInsured = parseFloat(input);
-    if (isNaN(sumInsured) || sumInsured <= 0) {
-      return 'END Invalid amount.';
+    if (isNaN(sumInsured) || sumInsured < MIN_SUM_INSURED || sumInsured > MAX_SUM_INSURED) {
+      return `END Invalid amount. Must be between ${MIN_SUM_INSURED.toLocaleString()} and ${MAX_SUM_INSURED.toLocaleString()} KES.`;
     }
 
     session.data.sumInsured = sumInsured;
