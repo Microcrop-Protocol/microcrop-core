@@ -29,6 +29,24 @@ export const authController = {
     }
   },
 
+  async forgotPassword(req, res, next) {
+    try {
+      const result = await authService.forgotPassword(req.body.email);
+      res.status(200).json(formatResponse(result));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async resetPassword(req, res, next) {
+    try {
+      const result = await authService.resetPassword(req.body.token, req.body.password);
+      res.status(200).json(formatResponse(result));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getMe(req, res, next) {
     try {
       const result = await authService.getMe(req.user.id);
