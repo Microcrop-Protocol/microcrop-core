@@ -56,7 +56,9 @@ app.use(cors(corsOptions));
 // Security headers
 app.use(
   helmet({
-    contentSecurityPolicy: { directives: { defaultSrc: ["'self'"] } },
+    contentSecurityPolicy: env.isProd
+      ? { directives: { defaultSrc: ["'self'"], connectSrc: ["'self'"] } }
+      : false,
     hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
     frameguard: { action: 'deny' },
   })
