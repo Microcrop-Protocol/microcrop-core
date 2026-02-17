@@ -1,13 +1,16 @@
 # ── Build stage ─────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
+# bcrypt needs build tools for native compilation
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 # Install dependencies first (better layer caching)
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 
-RUN npm ci --ignore-scripts && npx prisma generate
+RUN npm ci && npx prisma generate
 
 # ── Production stage ────────────────────────────────────────────────────────
 FROM node:20-alpine
@@ -31,6 +34,6 @@ USER microcrop
 
 EXPOSE 3000
 
-# Use dumb-init for proper signal handling (SIGTERM forwarding)
+# Run migrations then start the server
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "src/index.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node src/index.js"]
