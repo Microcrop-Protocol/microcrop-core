@@ -9,10 +9,13 @@ import {
   withdrawPoolSchema,
   depositorSchema,
   poolSettingsSchema,
+  fundWalletSchema,
 } from '../validators/organization.validator.js';
 import prisma from '../config/database.js';
 import { formatResponse } from '../utils/helpers.js';
 import organizationService from '../services/organization.service.js';
+import paymentService from '../services/payment.service.js';
+import { getWalletBalances } from '../blockchain/wallet-manager.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -349,6 +352,69 @@ router.put(
         organizationId: req.organization?.id,
         error: error.message,
         stack: error.stack,
+      });
+      next(error);
+    }
+  }
+);
+
+// ============================================
+// WALLET MANAGEMENT
+// ============================================
+
+// Get wallet info and balances
+router.get('/me/wallet', async (req, res, next) => {
+  try {
+    const org = req.organization;
+
+    if (!org.walletAddress) {
+      return res.status(200).json(
+        formatResponse({
+          walletAddress: null,
+          walletCreated: false,
+          message: 'Organization does not have a wallet yet. Deploy a pool to create one.',
+        })
+      );
+    }
+
+    const balances = await getWalletBalances(org.walletAddress);
+
+    res.status(200).json(
+      formatResponse({
+        walletAddress: org.walletAddress,
+        walletCreated: true,
+        balances,
+      })
+    );
+  } catch (error) {
+    logger.error('GET /me/wallet error', {
+      organizationId: req.organization?.id,
+      error: error.message,
+    });
+    next(error);
+  }
+});
+
+// Fund wallet via M-Pesa
+router.post(
+  '/me/wallet/fund',
+  authorize('ORG_ADMIN'),
+  validate(fundWalletSchema),
+  async (req, res, next) => {
+    try {
+      const { phoneNumber, amountKES } = req.body;
+
+      const result = await paymentService.initiateWalletFunding(
+        req.organization.id,
+        phoneNumber,
+        amountKES
+      );
+
+      res.status(200).json(formatResponse(result));
+    } catch (error) {
+      logger.error('POST /me/wallet/fund error', {
+        organizationId: req.organization?.id,
+        error: error.message,
       });
       next(error);
     }
