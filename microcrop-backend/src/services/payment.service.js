@@ -343,6 +343,81 @@ const paymentService = {
   },
 
   /**
+   * Initiate M-Pesa wallet funding for an organization.
+   * USDC is sent directly to the org's Privy wallet address.
+   */
+  async initiateWalletFunding(organizationId, phoneNumber, amountKES) {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!org) {
+      throw new NotFoundError('Organization not found');
+    }
+
+    if (!org.walletAddress) {
+      throw new ValidationError('Organization does not have a wallet. Deploy a pool first.');
+    }
+
+    const reference = uuidv4();
+    const usdcAddress = getUsdcAddress();
+
+    // Create transaction record
+    const transaction = await prisma.transaction.create({
+      data: {
+        reference,
+        type: 'WALLET_FUNDING',
+        status: 'PENDING',
+        amount: amountKES,
+        currency: 'KES',
+        phoneNumber,
+        organizationId,
+        metadata: {},
+      },
+    });
+
+    // Initiate M-Pesa payment — USDC goes to org wallet, NOT the pool
+    const paymentResult = await paymentProviderService.initiateOnramp(
+      phoneNumber,
+      amountKES,
+      org.walletAddress, // Destination: org's Privy wallet
+      usdcAddress,
+      reference
+    );
+
+    // Update transaction with provider info
+    await prisma.transaction.update({
+      where: { id: transaction.id },
+      data: {
+        metadata: {
+          provider: paymentResult.provider,
+          orderId: paymentResult.orderId,
+          checkoutRequestId: paymentResult.orderId,
+          destinationWallet: org.walletAddress,
+        },
+      },
+    });
+
+    logger.info('Wallet funding initiated', {
+      transactionId: transaction.id,
+      provider: paymentResult.provider,
+      orderId: paymentResult.orderId,
+      walletAddress: org.walletAddress,
+      amountKES,
+    });
+
+    return {
+      transactionId: transaction.id,
+      reference,
+      orderId: paymentResult.orderId,
+      provider: paymentResult.provider,
+      status: 'PENDING',
+      walletAddress: org.walletAddress,
+      instructions: 'Check your phone for M-Pesa prompt',
+    };
+  },
+
+  /**
    * Get active payment provider info
    */
   async getProviderInfo() {
