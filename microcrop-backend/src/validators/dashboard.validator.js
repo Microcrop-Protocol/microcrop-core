@@ -90,3 +90,4 @@ export function groupByToMap(results, keyField, valueField = '_count') {
   }
   return map;
 }
+
