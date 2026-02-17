@@ -62,6 +62,11 @@ export const poolSettingsSchema = Joi.object({
   withdrawalsOpen: Joi.boolean().optional(),
 });
 
+export const fundWalletSchema = Joi.object({
+  phoneNumber: Joi.string().required(),
+  amountKES: Joi.number().min(100).required(),
+});
+
 export const configureOrgSchema = Joi.object({
   ussdShortCode: Joi.string().optional(),
   brandName: Joi.string().optional(),
