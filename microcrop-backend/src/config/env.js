@@ -53,6 +53,11 @@ export const env = {
   // Backend wallet (for on-chain operations)
   backendWallet: optional('BACKEND_WALLET', ''),
 
+  // Privy (per-org server wallets)
+  privyAppId: optional('PRIVY_APP_ID', ''),
+  privyAppSecret: optional('PRIVY_APP_SECRET', ''),
+  privyAuthKey: optional('PRIVY_AUTH_KEY', ''),
+
   // Pretium (Primary payment provider)
   pretiumApiUrl: optional('PRETIUM_API_URL', 'https://api.pretium.africa'),
   pretiumApiKey: optional('PRETIUM_API_KEY', ''),
