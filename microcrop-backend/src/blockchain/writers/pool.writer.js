@@ -1,8 +1,22 @@
-import { riskPoolFactory, getRiskPoolContract, getUsdcAddress, wallet, ethers } from '../../config/blockchain.js';
+import { riskPoolFactory, getRiskPoolContract, getUsdcAddress, wallet, ethers, provider } from '../../config/blockchain.js';
 import nonceManager from '../nonce-manager.js';
+import { sendOrgTransaction } from '../wallet-manager.js';
 import logger from '../../utils/logger.js';
 import { BlockchainError } from '../../utils/errors.js';
 import { env } from '../../config/env.js';
+
+// Minimal ABI interfaces for encoding calldata
+const USDC_IFACE = new ethers.Interface([
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+]);
+
+const POOL_IFACE = new ethers.Interface([
+  'function deposit(uint256 amount, uint256 minTokensOut) returns (uint256)',
+  'function withdraw(uint256 tokenAmount, uint256 minUsdcOut) returns (uint256)',
+  'event Deposited(address indexed investor, uint256 usdcAmount, uint256 tokensMinted, uint256 tokenPrice)',
+  'event Withdrawn(address indexed investor, uint256 tokenAmount, uint256 usdcReceived)',
+]);
 
 // Pool type enum matching contract
 const PoolType = {
@@ -237,36 +251,81 @@ export async function createMutualPool({
 }
 
 /**
- * Deposit USDC into a risk pool (add liquidity)
+ * Deposit USDC into a risk pool (add liquidity).
+ * If orgWalletId is provided, sends via Privy server wallet (gas sponsored).
+ * Otherwise falls back to the platform wallet.
  */
-export async function depositToPool(poolAddress, amount, minTokensOut = 0) {
-  if (!wallet) {
-    throw new BlockchainError('Wallet not configured for deposits');
-  }
-
+export async function depositToPool(poolAddress, amount, minTokensOut = 0, orgWalletId = null) {
   try {
-    const pool = getRiskPoolContract(poolAddress);
     const amountWei = ethers.parseUnits(String(amount), 6);
     const usdcAddress = getUsdcAddress();
 
-    // Create USDC contract instance
+    logger.info('Depositing to pool', { poolAddress, amount, viaPrivy: !!orgWalletId });
+
+    // --- Privy org wallet path ---
+    if (orgWalletId) {
+      // 1. Approve USDC for the pool (max approval for simplicity)
+      const approveData = USDC_IFACE.encodeFunctionData('approve', [poolAddress, amountWei]);
+      const approveTx = await sendOrgTransaction(orgWalletId, usdcAddress, approveData);
+      logger.info('USDC approval sent via Privy', { hash: approveTx.hash });
+
+      // Wait for approval to confirm
+      const approveReceipt = await provider.waitForTransaction(approveTx.hash, 1, 120000);
+      if (!approveReceipt || approveReceipt.status === 0) {
+        throw new BlockchainError('USDC approval transaction failed');
+      }
+
+      // 2. Deposit to pool
+      const depositData = POOL_IFACE.encodeFunctionData('deposit', [amountWei, minTokensOut]);
+      const depositTx = await sendOrgTransaction(orgWalletId, poolAddress, depositData);
+
+      const receipt = await provider.waitForTransaction(depositTx.hash, 1, 120000);
+      if (!receipt || receipt.status === 0) {
+        throw new BlockchainError('Deposit transaction failed');
+      }
+
+      // Parse Deposited event
+      const depositedEvent = receipt.logs
+        .map((log) => {
+          try { return POOL_IFACE.parseLog(log); } catch { return null; }
+        })
+        .find((parsed) => parsed && parsed.name === 'Deposited');
+
+      const tokensMinted = depositedEvent?.args?.tokensMinted;
+      const tokenPrice = depositedEvent?.args?.tokenPrice;
+
+      logger.info('Deposit successful via Privy wallet', {
+        poolAddress, amount, txHash: receipt.hash,
+        tokensMinted: tokensMinted ? ethers.formatUnits(tokensMinted, 6) : null,
+      });
+
+      return {
+        txHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        tokensMinted: tokensMinted ? ethers.formatUnits(tokensMinted, 6) : null,
+        tokenPrice: tokenPrice ? ethers.formatUnits(tokenPrice, 6) : null,
+      };
+    }
+
+    // --- Platform wallet fallback ---
+    if (!wallet) {
+      throw new BlockchainError('Wallet not configured for deposits');
+    }
+
+    const pool = getRiskPoolContract(poolAddress);
     const usdcAbi = [
       'function approve(address spender, uint256 amount) returns (bool)',
       'function allowance(address owner, address spender) view returns (uint256)',
     ];
     const usdc = new ethers.Contract(usdcAddress, usdcAbi, wallet);
 
-    // Deposit to pool
-    logger.info('Depositing to pool', { poolAddress, amount });
     try {
       await pool.deposit.estimateGas(amountWei, minTokensOut);
     } catch (gasError) {
       throw new BlockchainError(`Deposit would revert: ${gasError.shortMessage || gasError.message}`, gasError);
     }
 
-    // Serialize approve + deposit together to prevent nonce collisions
     return await nonceManager.serialize(async () => {
-      // Check and approve if needed
       const allowance = await usdc.allowance(wallet.address, poolAddress);
       if (allowance < amountWei) {
         logger.info('Approving USDC for pool deposit', { poolAddress, amount });
@@ -277,14 +336,9 @@ export async function depositToPool(poolAddress, amount, minTokensOut = 0) {
       const tx = await pool.deposit(amountWei, minTokensOut);
       const receipt = await tx.wait(1, 120000);
 
-      // Extract deposit event
       const depositedEvent = receipt.logs
         .map((log) => {
-          try {
-            return pool.interface.parseLog(log);
-          } catch {
-            return null;
-          }
+          try { return pool.interface.parseLog(log); } catch { return null; }
         })
         .find((parsed) => parsed && parsed.name === 'Deposited');
 
@@ -292,8 +346,7 @@ export async function depositToPool(poolAddress, amount, minTokensOut = 0) {
       const tokenPrice = depositedEvent?.args?.tokenPrice;
 
       logger.info('Deposit successful', {
-        poolAddress,
-        amount,
+        poolAddress, amount,
         tokensMinted: tokensMinted ? ethers.formatUnits(tokensMinted, 6) : null,
         txHash: receipt.hash,
       });
@@ -312,18 +365,53 @@ export async function depositToPool(poolAddress, amount, minTokensOut = 0) {
 }
 
 /**
- * Withdraw USDC from a risk pool (remove liquidity)
+ * Withdraw USDC from a risk pool (remove liquidity).
+ * If orgWalletId is provided, sends via Privy server wallet (gas sponsored).
+ * Otherwise falls back to the platform wallet.
  */
-export async function withdrawFromPool(poolAddress, tokenAmount, minUsdcOut = 0) {
-  if (!wallet) {
-    throw new BlockchainError('Wallet not configured for withdrawals');
-  }
-
+export async function withdrawFromPool(poolAddress, tokenAmount, minUsdcOut = 0, orgWalletId = null) {
   try {
-    const pool = getRiskPoolContract(poolAddress);
     const tokenAmountWei = ethers.parseUnits(String(tokenAmount), 6);
 
-    logger.info('Withdrawing from pool', { poolAddress, tokenAmount });
+    logger.info('Withdrawing from pool', { poolAddress, tokenAmount, viaPrivy: !!orgWalletId });
+
+    // --- Privy org wallet path ---
+    if (orgWalletId) {
+      const withdrawData = POOL_IFACE.encodeFunctionData('withdraw', [tokenAmountWei, minUsdcOut]);
+      const withdrawTx = await sendOrgTransaction(orgWalletId, poolAddress, withdrawData);
+
+      const receipt = await provider.waitForTransaction(withdrawTx.hash, 1, 120000);
+      if (!receipt || receipt.status === 0) {
+        throw new BlockchainError('Withdraw transaction failed');
+      }
+
+      const withdrawnEvent = receipt.logs
+        .map((log) => {
+          try { return POOL_IFACE.parseLog(log); } catch { return null; }
+        })
+        .find((parsed) => parsed && parsed.name === 'Withdrawn');
+
+      const usdcReceived = withdrawnEvent?.args?.usdcReceived;
+
+      logger.info('Withdrawal successful via Privy wallet', {
+        poolAddress, tokenAmount, txHash: receipt.hash,
+        usdcReceived: usdcReceived ? ethers.formatUnits(usdcReceived, 6) : null,
+      });
+
+      return {
+        txHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        usdcReceived: usdcReceived ? ethers.formatUnits(usdcReceived, 6) : null,
+      };
+    }
+
+    // --- Platform wallet fallback ---
+    if (!wallet) {
+      throw new BlockchainError('Wallet not configured for withdrawals');
+    }
+
+    const pool = getRiskPoolContract(poolAddress);
+
     try {
       await pool.withdraw.estimateGas(tokenAmountWei, minUsdcOut);
     } catch (gasError) {
@@ -334,22 +422,16 @@ export async function withdrawFromPool(poolAddress, tokenAmount, minUsdcOut = 0)
       const tx = await pool.withdraw(tokenAmountWei, minUsdcOut);
       const receipt = await tx.wait(1, 120000);
 
-      // Extract withdraw event
       const withdrawnEvent = receipt.logs
         .map((log) => {
-          try {
-            return pool.interface.parseLog(log);
-          } catch {
-            return null;
-          }
+          try { return pool.interface.parseLog(log); } catch { return null; }
         })
         .find((parsed) => parsed && parsed.name === 'Withdrawn');
 
       const usdcReceived = withdrawnEvent?.args?.usdcReceived;
 
       logger.info('Withdrawal successful', {
-        poolAddress,
-        tokenAmount,
+        poolAddress, tokenAmount,
         usdcReceived: usdcReceived ? ethers.formatUnits(usdcReceived, 6) : null,
         txHash: receipt.hash,
       });
