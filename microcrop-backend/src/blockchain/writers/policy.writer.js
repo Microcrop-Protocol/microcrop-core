@@ -37,9 +37,12 @@ export async function createPolicyOnChain({
       coverageType,
     });
 
+    // Convert UUID string to uint256 via keccak256 hash
+    const plotIdHash = BigInt(ethers.keccak256(ethers.toUtf8Bytes(plotId)));
+
     const args = [
       farmerAddress,
-      plotId,
+      plotIdHash,
       ethers.parseUnits(String(sumInsured), 6),
       ethers.parseUnits(String(premium), 6),
       durationDays,
