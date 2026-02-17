@@ -30,6 +30,7 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^6.19.2",
+    "@privy-io/node": "^0.9.0",
     "axios": "^1.13.3",
     "bcrypt": "^6.0.0",
     "bull": "^4.16.5",
