@@ -18,8 +18,10 @@ model Organization {
   type               OrgType
 
   // Blockchain
-  poolAddress  String? @unique
-  adminWallet  String?
+  poolAddress    String? @unique
+  adminWallet    String?
+  privyWalletId  String? @unique
+  walletAddress  String? @unique
 
   // White-labeling
   ussdShortCode String? @unique
@@ -481,6 +483,7 @@ enum TransactionType {
   PREMIUM
   PAYOUT
   REFUND
+  WALLET_FUNDING
 }
 
 enum TransactionStatus {
