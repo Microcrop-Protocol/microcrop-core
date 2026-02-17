@@ -5,6 +5,7 @@ import { NotFoundError, ConflictError, ValidationError } from '../utils/errors.j
 import logger from '../utils/logger.js';
 import * as poolWriter from '../blockchain/writers/pool.writer.js';
 import * as poolReader from '../blockchain/readers/pool.reader.js';
+import { createOrgWallet, getWalletBalances } from '../blockchain/wallet-manager.js';
 
 const organizationService = {
   async registerOrganization(data) {
@@ -62,9 +63,9 @@ const organizationService = {
         throw new ValidationError('targetCapital is required');
       }
 
-      const poolOwner = org.walletAddress || poolConfig.poolOwner;
+      const poolOwner = org.adminWallet || poolConfig.poolOwner;
       if (!poolOwner) {
-        throw new ValidationError('Organization wallet address or poolOwner is required');
+        throw new ValidationError('Organization admin wallet or poolOwner is required');
       }
 
       let result;
@@ -108,13 +109,45 @@ const organizationService = {
         });
       }
 
-      // Update organization with pool address
+      // Create Privy wallet for this organization
+      let orgWallet = null;
+      try {
+        orgWallet = await createOrgWallet();
+        logger.info('Created Privy wallet for organization', {
+          orgId,
+          walletId: orgWallet.walletId,
+          address: orgWallet.address,
+        });
+
+        // Whitelist org wallet on private pool
+        if (poolType !== 'PUBLIC') {
+          await poolWriter.addDepositor(result.poolAddress, orgWallet.address);
+          logger.info('Org wallet whitelisted on pool', {
+            orgId,
+            poolAddress: result.poolAddress,
+            walletAddress: orgWallet.address,
+          });
+        }
+      } catch (walletError) {
+        // Pool deployed successfully but wallet creation failed — log and continue
+        logger.error('Failed to create org wallet (pool still deployed)', {
+          orgId,
+          error: walletError.message,
+        });
+      }
+
+      // Update organization with pool address and wallet
+      const updateData = {
+        poolAddress: result.poolAddress,
+      };
+      if (orgWallet) {
+        updateData.privyWalletId = orgWallet.walletId;
+        updateData.walletAddress = orgWallet.address;
+      }
+
       const updated = await prisma.organization.update({
         where: { id: orgId },
-        data: {
-          poolAddress: result.poolAddress,
-          poolDeployedAt: new Date(),
-        },
+        data: updateData,
       });
 
       logger.info('Pool deployed for organization', {
@@ -122,6 +155,7 @@ const organizationService = {
         poolAddress: result.poolAddress,
         poolId: result.poolId,
         txHash: result.txHash,
+        walletAddress: orgWallet?.address,
       });
 
       return {
@@ -145,17 +179,12 @@ const organizationService = {
         throw new ValidationError('Organization does not have a deployed pool');
       }
 
-      const result = await poolWriter.depositToPool(org.poolAddress, amount, 0);
-
-      // Update organization totals
-      await prisma.organization.update({
-        where: { id: orgId },
-        data: {
-          totalCapitalDeposited: {
-            increment: parseFloat(amount),
-          },
-        },
-      });
+      const result = await poolWriter.depositToPool(
+        org.poolAddress,
+        amount,
+        0,
+        org.privyWalletId || null,
+      );
 
       logger.info('Deposit to pool successful', {
         orgId,
@@ -182,7 +211,12 @@ const organizationService = {
         throw new ValidationError('Organization does not have a deployed pool');
       }
 
-      const result = await poolWriter.withdrawFromPool(org.poolAddress, tokenAmount, 0);
+      const result = await poolWriter.withdrawFromPool(
+        org.poolAddress,
+        tokenAmount,
+        0,
+        org.privyWalletId || null,
+      );
 
       logger.info('Withdrawal from pool successful', {
         orgId,
