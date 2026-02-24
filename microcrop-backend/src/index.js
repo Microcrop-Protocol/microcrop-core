@@ -23,15 +23,17 @@ const server = app.listen(env.port, () => {
   });
 });
 
-// Start blockchain event listeners
-try {
-  poolListener.start();
-  policyListener.start();
-  payoutListener.start();
-  logger.info('Blockchain event listeners started');
-} catch (error) {
-  logger.warn('Blockchain listeners failed to start', { message: error.message });
-}
+// Start blockchain event listeners (each awaited so errors are caught)
+(async () => {
+  try {
+    await poolListener.start();
+    await policyListener.start();
+    await payoutListener.start();
+    logger.info('Blockchain event listeners started');
+  } catch (error) {
+    logger.warn('Blockchain listeners failed to start', { message: error.message, stack: error.stack });
+  }
+})();
 
 // Start background workers
 try {
