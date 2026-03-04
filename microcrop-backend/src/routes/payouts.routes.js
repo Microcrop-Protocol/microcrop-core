@@ -26,7 +26,7 @@ router.get('/', async (req, res, next) => {
         where,
         skip,
         take,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { initiatedAt: 'desc' },
         include: {
           policy: {
             select: {
@@ -49,6 +49,9 @@ router.get('/', async (req, res, next) => {
     next(error);
   }
 });
+
+router.get('/reconciliation', payoutsController.getReconciliation);
+router.post('/batch-retry', authorize('ORG_ADMIN'), validate(batchRetrySchema), payoutsController.batchRetry);
 
 router.get('/:payoutId', async (req, res, next) => {
   try {
@@ -77,7 +80,5 @@ router.get('/:payoutId', async (req, res, next) => {
 });
 
 router.post('/:payoutId/retry', authorize('ORG_ADMIN'), payoutsController.retry);
-router.post('/batch-retry', authorize('ORG_ADMIN'), validate(batchRetrySchema), payoutsController.batchRetry);
-router.get('/reconciliation', payoutsController.getReconciliation);
 
 export const payoutsRouter = router;
