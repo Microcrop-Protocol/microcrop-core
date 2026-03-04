@@ -42,6 +42,20 @@ const emailService = {
     }
   },
 
+  async sendWelcome(email, name) {
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Welcome to MicroCrop!</h2>
+        <p>Hi${name ? ` ${name}` : ''},</p>
+        <p>Your account has been created successfully. You're now part of the MicroCrop network — parametric crop insurance powered by blockchain.</p>
+        <p>If you have any questions, feel free to reach out to our support team.</p>
+        <p style="color: #666; font-size: 14px;">— The MicroCrop Team</p>
+      </div>
+    `;
+
+    return this.send(email, 'Welcome to MicroCrop', html);
+  },
+
   async sendPasswordReset(email, token) {
     const resetUrl = `${env.frontendUrl}/reset-password?token=${token}`;
 
