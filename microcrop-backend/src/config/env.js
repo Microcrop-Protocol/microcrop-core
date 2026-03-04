@@ -89,7 +89,7 @@ export const env = {
 
   // Email (Resend)
   resendApiKey: optional('RESEND_API_KEY', ''),
-  emailFrom: optional('EMAIL_FROM', 'onboarding@resend.dev'),
+  emailFrom: optional('EMAIL_FROM', 'noreply@microcrop.app'),
 
   // Frontend
   frontendUrl: optional('FRONTEND_URL', 'https://network.microcrop.app'),
