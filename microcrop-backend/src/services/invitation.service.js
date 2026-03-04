@@ -1,5 +1,7 @@
 import prisma from '../config/database.js';
 import { AppError } from '../utils/errors.js';
+import emailService from './email.service.js';
+import logger from '../utils/logger.js';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 
@@ -166,8 +168,9 @@ export const invitationService = {
         },
       });
 
-      // In production, send email with invitation link
-      // await emailService.sendInvitation(updated);
+      emailService.sendInvitation(updated).catch((err) =>
+        logger.error('Failed to send invitation email', { email: updated.email, error: err.message })
+      );
 
       return {
         ...updated,
@@ -176,8 +179,9 @@ export const invitationService = {
       };
     }
 
-    // In production, send email with invitation link
-    // await emailService.sendInvitation(invitation);
+    emailService.sendInvitation(invitation).catch((err) =>
+      logger.error('Failed to send invitation email', { email: invitation.email, error: err.message })
+    );
 
     return {
       ...invitation,
@@ -251,8 +255,9 @@ export const invitationService = {
       },
     });
 
-    // In production, send email with invitation link
-    // await emailService.sendInvitation(invitation);
+    emailService.sendInvitation(invitation).catch((err) =>
+      logger.error('Failed to send invitation email', { email: invitation.email, error: err.message })
+    );
 
     return {
       ...invitation,
@@ -501,8 +506,9 @@ export const invitationService = {
       },
     });
 
-    // In production, send email with new invitation link
-    // await emailService.sendInvitation(updated);
+    emailService.sendInvitation(updated).catch((err) =>
+      logger.error('Failed to send invitation email', { email: updated.email, error: err.message })
+    );
 
     return {
       ...updated,
