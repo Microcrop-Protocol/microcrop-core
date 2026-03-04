@@ -56,6 +56,28 @@ const emailService = {
     return this.send(email, 'Welcome to MicroCrop', html);
   },
 
+  async sendInvitation(invitation) {
+    const { email, firstName, organization, token } = invitation;
+    const acceptUrl = `${env.frontendUrl}/accept-invitation?token=${token}`;
+    const orgName = organization?.brandName || organization?.name || 'an organization';
+
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>You're Invited to MicroCrop</h2>
+        <p>Hi${firstName ? ` ${firstName}` : ''},</p>
+        <p>You've been invited to join <strong>${orgName}</strong> as an Organization Admin on the MicroCrop platform.</p>
+        <p>Click the button below to set up your account. This invitation expires in 72 hours.</p>
+        <p style="margin: 24px 0;">
+          <a href="${acceptUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">Accept Invitation</a>
+        </p>
+        <p style="color: #666; font-size: 14px;">If you weren't expecting this, you can safely ignore this email.</p>
+        <p style="color: #999; font-size: 12px;">Link: ${acceptUrl}</p>
+      </div>
+    `;
+
+    return this.send(email, `You're invited to join ${orgName} on MicroCrop`, html);
+  },
+
   async sendPasswordReset(email, token) {
     const resetUrl = `${env.frontendUrl}/reset-password?token=${token}`;
 
