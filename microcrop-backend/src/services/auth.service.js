@@ -64,6 +64,10 @@ export const authService = {
 
     const { accessToken, refreshToken } = generateTokens(user);
 
+    emailService.sendWelcome(user.email, user.name).catch((err) =>
+      logger.error('Failed to send welcome email', { email: user.email, error: err.message })
+    );
+
     return {
       user: excludePassword(user),
       accessToken,
