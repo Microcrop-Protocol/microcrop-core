@@ -1,33 +1,18 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
 
-let transporter = null;
-
-if (env.smtpHost && env.smtpUser) {
-  transporter = nodemailer.createTransport({
-    host: env.smtpHost,
-    port: env.smtpPort,
-    secure: env.smtpPort === 465,
-    auth: {
-      user: env.smtpUser,
-      pass: env.smtpPass,
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
-}
+const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
 
 const emailService = {
   async send(to, subject, html) {
-    if (!transporter) {
-      logger.warn('SMTP not configured - email skipped', { to, subject });
-      return { status: 'skipped', reason: 'SMTP not configured' };
+    if (!resend) {
+      logger.warn('Resend not configured - email skipped', { to, subject });
+      return { status: 'skipped', reason: 'Resend API key not configured' };
     }
 
     try {
-      await transporter.sendMail({
+      await resend.emails.send({
         from: env.emailFrom,
         to,
         subject,
