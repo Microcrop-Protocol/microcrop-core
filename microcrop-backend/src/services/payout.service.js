@@ -90,7 +90,7 @@ const payoutService = {
 
       const where = { organizationId };
       if (dateFilter.gte || dateFilter.lte) {
-        where.createdAt = dateFilter;
+        where.initiatedAt = dateFilter;
       }
 
       const [byStatus, totalClaimedPolicies] = await Promise.all([
@@ -98,7 +98,7 @@ const payoutService = {
           by: ['status'],
           where,
           _count: { id: true },
-          _sum: { amount: true },
+          _sum: { amountUSDC: true },
         }),
         prisma.policy.count({
           where: {
@@ -112,7 +112,7 @@ const payoutService = {
         byStatus: byStatus.map((group) => ({
           status: group.status,
           count: group._count.id,
-          totalAmount: group._sum.amount || 0,
+          totalAmount: group._sum.amountUSDC || 0,
         })),
         totalClaimedPolicies,
         totalPayouts: byStatus.reduce((sum, g) => sum + g._count.id, 0),
