@@ -3,6 +3,8 @@ import logger from '../utils/logger.js';
 import { buildDateFilter, aggregateTimeSeries, groupByToMap } from '../validators/dashboard.validator.js';
 import { paginate } from '../utils/helpers.js';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const dashboardOrgService = {
   async getOverview(organizationId, query) {
     try {
@@ -157,14 +159,15 @@ const dashboardOrgService = {
         }),
       ]);
 
-      const byCropType = await prisma.$queryRaw`
+      if (!UUID_RE.test(organizationId)) throw new Error('Invalid organization ID');
+      const byCropType = await prisma.$queryRawUnsafe(`
         SELECT pl."cropType", COUNT(*)::int AS count
         FROM "Policy" pol
         JOIN "Plot" pl ON pol."plotId" = pl."id"
-        WHERE pol."organizationId" = ${organizationId}::uuid
+        WHERE pol."organizationId" = '${organizationId}'
         GROUP BY pl."cropType"
         ORDER BY count DESC
-      `;
+      `);
 
       const now = new Date();
       const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -345,7 +348,8 @@ const dashboardOrgService = {
         prisma.damageAssessment.count({ where }),
       ]);
 
-      const heatmapData = await prisma.$queryRaw`
+      if (!UUID_RE.test(organizationId)) throw new Error('Invalid organization ID');
+      const heatmapData = await prisma.$queryRawUnsafe(`
         SELECT
           da."combinedDamage",
           da."triggered",
@@ -357,10 +361,12 @@ const dashboardOrgService = {
         FROM "DamageAssessment" da
         JOIN "Policy" pol ON da."policyId" = pol."id"
         JOIN "Plot" pl ON pol."plotId" = pl."id"
-        WHERE pol."organizationId" = ${organizationId}::uuid
-          AND da."triggerDate" >= ${dateFilter.gte}
-          AND da."triggerDate" <= ${dateFilter.lte}
-      `;
+        WHERE pol."organizationId" = '${organizationId}'
+          AND da."triggerDate" >= $1
+          AND da."triggerDate" <= $2`,
+        dateFilter.gte,
+        dateFilter.lte,
+      );
 
       return {
         assessments: { data: assessments, total, page, limit },
@@ -406,7 +412,7 @@ const dashboardOrgService = {
         prisma.platformFee.aggregate({
           where: {
             organizationId,
-            createdAt: { gte: dateFilter.gte, lte: dateFilter.lte },
+            collectedAt: { gte: dateFilter.gte, lte: dateFilter.lte },
           },
           _sum: { feeAmount: true },
         }),
@@ -486,18 +492,28 @@ const dashboardOrgService = {
 
       if (plotIds.length > 0) {
         [latestWeather, latestSatellite] = await Promise.all([
-          prisma.$queryRaw`
-            SELECT DISTINCT ON ("plotId") *
-            FROM "WeatherEvent"
-            WHERE "plotId" = ANY(${plotIds}::uuid[])
-            ORDER BY "plotId", "timestamp" DESC
-          `,
-          prisma.$queryRaw`
-            SELECT DISTINCT ON ("plotId") *
-            FROM "SatelliteData"
-            WHERE "plotId" = ANY(${plotIds}::uuid[])
-            ORDER BY "plotId", "captureDate" DESC
-          `,
+          (() => {
+            const ids = plotIds.filter(id => UUID_RE.test(id));
+            if (ids.length === 0) return Promise.resolve([]);
+            const inList = ids.map(id => `'${id}'`).join(',');
+            return prisma.$queryRawUnsafe(`
+              SELECT DISTINCT ON ("plotId") *
+              FROM "WeatherEvent"
+              WHERE "plotId" IN (${inList})
+              ORDER BY "plotId", "timestamp" DESC
+            `);
+          })(),
+          (() => {
+            const ids = plotIds.filter(id => UUID_RE.test(id));
+            if (ids.length === 0) return Promise.resolve([]);
+            const inList = ids.map(id => `'${id}'`).join(',');
+            return prisma.$queryRawUnsafe(`
+              SELECT DISTINCT ON ("plotId") *
+              FROM "SatelliteData"
+              WHERE "plotId" IN (${inList})
+              ORDER BY "plotId", "captureDate" DESC
+            `);
+          })(),
         ]);
       }
 
