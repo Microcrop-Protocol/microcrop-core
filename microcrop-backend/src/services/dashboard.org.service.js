@@ -16,6 +16,8 @@ const dashboardOrgService = {
         activeCropPolicies,
         activeLivestockPolicies,
         totalHerds,
+        tluAgg,
+        activeForageAlerts,
         periodNewPolicies,
         premiumAgg,
         payoutAgg,
@@ -26,6 +28,18 @@ const dashboardOrgService = {
         prisma.policy.count({ where: { organizationId, status: 'ACTIVE', productType: 'CROP' } }),
         prisma.policy.count({ where: { organizationId, status: 'ACTIVE', productType: 'LIVESTOCK' } }),
         prisma.herd.count({ where: { organizationId } }),
+        prisma.herd.aggregate({
+          where: { organizationId },
+          _sum: { tluCount: true, headCount: true },
+        }),
+        prisma.forageAlert.count({
+          where: {
+            status: { in: ['TRIGGERED', 'PROCESSING'] },
+            insuranceUnit: {
+              herds: { some: { organizationId } },
+            },
+          },
+        }),
         prisma.policy.count({
           where: { organizationId, createdAt: { gte: dateFilter.gte, lte: dateFilter.lte } },
         }),
@@ -52,12 +66,19 @@ const dashboardOrgService = {
 
       return {
         farmers: { total: totalFarmers },
-        herds: { total: totalHerds },
+        herds: {
+          total: totalHerds,
+          totalTLU: tluAgg._sum.tluCount || 0,
+          totalHeadCount: tluAgg._sum.headCount || 0,
+        },
         policies: {
           active: activePolicies,
           activeCrop: activeCropPolicies,
           activeLivestock: activeLivestockPolicies,
           periodNew: periodNewPolicies,
+        },
+        ibli: {
+          activeForageAlerts,
         },
         financials: {
           premiumsCollected: premiumAgg._sum.premium || 0,
@@ -584,13 +605,14 @@ const dashboardOrgService = {
         where.livestockType = livestockType;
       }
 
-      const [herds, total, livestockDistributionRaw] = await Promise.all([
+      const [herds, total, livestockDistributionRaw, tluAgg] = await Promise.all([
         prisma.herd.findMany({
           where,
           skip,
           take,
           include: {
             farmer: { select: { firstName: true, lastName: true, county: true } },
+            insuranceUnit: { select: { id: true, county: true, unitCode: true } },
             _count: { select: { policies: true } },
           },
           orderBy: { createdAt: 'desc' },
@@ -600,7 +622,11 @@ const dashboardOrgService = {
           by: ['livestockType'],
           where: { organizationId },
           _count: { _all: true },
-          _sum: { headCount: true },
+          _sum: { headCount: true, tluCount: true },
+        }),
+        prisma.herd.aggregate({
+          where: { organizationId },
+          _sum: { tluCount: true },
         }),
       ]);
 
@@ -608,14 +634,59 @@ const dashboardOrgService = {
         livestockType: row.livestockType,
         herdCount: row._count._all,
         totalHeadCount: row._sum.headCount || 0,
+        totalTLU: row._sum.tluCount || 0,
       }));
 
       return {
         herds: { data: herds, total, page: p, limit: l },
         livestockDistribution,
+        totalTLU: tluAgg._sum.tluCount || 0,
       };
     } catch (error) {
       logger.error('Failed to get org herds', { organizationId, error: error.message });
+      throw error;
+    }
+  },
+
+  async getForageAlerts(organizationId, query) {
+    try {
+      const dateFilter = buildDateFilter(query);
+      const { skip, take, page, limit } = paginate(query.page, query.limit);
+
+      // Get forage alerts for insurance units linked to this org's herds
+      const orgUnitIds = await prisma.herd.findMany({
+        where: { organizationId, insuranceUnitId: { not: null } },
+        select: { insuranceUnitId: true },
+        distinct: ['insuranceUnitId'],
+      });
+
+      const unitIds = orgUnitIds.map((h) => h.insuranceUnitId);
+
+      if (unitIds.length === 0) {
+        return { data: [], total: 0, page: 1, limit };
+      }
+
+      const where = {
+        insuranceUnitId: { in: unitIds },
+        createdAt: { gte: dateFilter.gte, lte: dateFilter.lte },
+      };
+
+      const [alerts, total] = await Promise.all([
+        prisma.forageAlert.findMany({
+          where,
+          skip,
+          take,
+          include: {
+            insuranceUnit: { select: { county: true, unitCode: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.forageAlert.count({ where }),
+      ]);
+
+      return { data: alerts, total, page, limit };
+    } catch (error) {
+      logger.error('Failed to get forage alerts', { organizationId, error: error.message });
       throw error;
     }
   },
