@@ -5,6 +5,8 @@ import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
 import { invitationController } from '../controllers/invitation.controller.js';
 import { checkPendingPayouts } from '../workers/payout.worker.js';
+import forageTriggerService from '../services/forage-trigger.service.js';
+import { addForageTriggerJob } from '../workers/forage-trigger.worker.js';
 
 const router = Router();
 
@@ -58,6 +60,8 @@ router.get('/active-policies', async (_req, res, next) => {
         productType: true,
         sumInsured: true,
         livestockPeril: true,
+        season: true,
+        insuranceUnitId: true,
         plot: {
           select: {
             latitude: true,
@@ -67,10 +71,15 @@ router.get('/active-policies', async (_req, res, next) => {
         },
         herd: {
           select: {
-            latitude: true,
-            longitude: true,
             livestockType: true,
             headCount: true,
+            tluCount: true,
+          },
+        },
+        insuranceUnit: {
+          select: {
+            county: true,
+            unitCode: true,
           },
         },
         farmer: {
@@ -87,11 +96,13 @@ router.get('/active-policies', async (_req, res, next) => {
           policyId: p.id,
           onChainPolicyId: p.policyId || p.policyNumber,
           productType: 'LIVESTOCK',
-          latitude: parseFloat(p.herd.latitude),
-          longitude: parseFloat(p.herd.longitude),
+          season: p.season,
+          insuranceUnitId: p.insuranceUnitId,
+          county: p.insuranceUnit?.county || null,
+          unitCode: p.insuranceUnit?.unitCode || null,
           livestockType: p.herd.livestockType,
           headCount: p.herd.headCount,
-          livestockPeril: p.livestockPeril,
+          tluCount: parseFloat(p.herd.tluCount),
           sumInsured: parseFloat(p.sumInsured),
           farmerWallet: p.farmer?.walletAddress || null,
         };
@@ -160,6 +171,79 @@ router.post('/payouts/check-pending', async (_req, res, next) => {
     await checkPendingPayouts();
     logger.info('Internal API: pending payouts check completed');
     res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/internal/forage-trigger
+ *
+ * Evaluates NDVI data against strike levels and triggers mass payouts.
+ * Called by CRE when new NDVI data is available.
+ */
+router.post('/forage-trigger', async (req, res, next) => {
+  try {
+    const { insuranceUnitId, season, year, cumulativeNDVI, source } = req.body;
+
+    if (!insuranceUnitId || !season || !year || cumulativeNDVI === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'BAD_REQUEST', message: 'Missing required fields: insuranceUnitId, season, year, cumulativeNDVI' },
+      });
+    }
+
+    const result = await forageTriggerService.evaluateTrigger({
+      insuranceUnitId,
+      season,
+      year,
+      cumulativeNDVI,
+      source,
+    });
+
+    // If triggered, queue the mass payout processing
+    if (result.triggered) {
+      try {
+        await addForageTriggerJob(result.alertId);
+      } catch (queueErr) {
+        logger.error('Failed to queue forage trigger job', { alertId: result.alertId, error: queueErr.message });
+      }
+    }
+
+    logger.info('Internal API: forage trigger evaluation', {
+      insuranceUnitId,
+      season,
+      year,
+      triggered: result.triggered,
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/internal/insurance-units
+ *
+ * Returns all active insurance units for CRE to monitor NDVI.
+ */
+router.get('/insurance-units', async (_req, res, next) => {
+  try {
+    const units = await prisma.insuranceUnit.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        county: true,
+        unitCode: true,
+        ndviBaselineLRLD: true,
+        ndviBaselineSRSD: true,
+        strikeLevelLRLD: true,
+        strikeLevelSRSD: true,
+      },
+    });
+
+    res.json({ success: true, units });
   } catch (error) {
     next(error);
   }
