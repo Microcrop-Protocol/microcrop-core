@@ -31,6 +31,7 @@ import { exportRouter } from './routes/export.routes.js';
 import { applicationRouter } from './routes/application.routes.js';
 import { invitationRouter } from './routes/invitation.routes.js';
 import { herdsRouter } from './routes/herds.routes.js';
+import { insuranceUnitsRouter } from './routes/insurance-units.routes.js';
 
 const app = express();
 
@@ -137,6 +138,7 @@ app.use('/api/dashboard/org', dashboardOrgRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/applications', applicationRouter);
 app.use('/api/invitations', invitationRouter);
+app.use('/api/insurance-units', insuranceUnitsRouter);
 
 // 404 handler
 app.use((_req, res) => {
