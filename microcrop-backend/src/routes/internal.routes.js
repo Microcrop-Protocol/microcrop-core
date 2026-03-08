@@ -184,17 +184,18 @@ router.post('/payouts/check-pending', async (_req, res, next) => {
  */
 router.post('/forage-trigger', async (req, res, next) => {
   try {
-    const { insuranceUnitId, season, year, cumulativeNDVI, source } = req.body;
+    const { insuranceUnitId, season, year, ndviValue, cumulativeNDVI, source } = req.body;
 
-    if (!insuranceUnitId || !season || !year || cumulativeNDVI === undefined) {
+    if (!insuranceUnitId || !season || !year || (ndviValue === undefined && cumulativeNDVI === undefined)) {
       return res.status(400).json({
         success: false,
-        error: { code: 'BAD_REQUEST', message: 'Missing required fields: insuranceUnitId, season, year, cumulativeNDVI' },
+        error: { code: 'BAD_REQUEST', message: 'Missing required fields: insuranceUnitId, season, year, and either ndviValue or cumulativeNDVI' },
       });
     }
 
     const result = await forageTriggerService.evaluateTrigger({
       insuranceUnitId,
+      ndviValue,
       season,
       year,
       cumulativeNDVI,
