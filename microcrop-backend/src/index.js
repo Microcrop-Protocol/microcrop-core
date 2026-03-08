@@ -13,6 +13,7 @@ import * as payoutListener from './blockchain/listeners/payout.listener.js';
 import { startPayoutWorker, getPayoutQueue } from './workers/payout.worker.js';
 import { startNotificationWorker, getNotificationQueue } from './workers/notification.worker.js';
 import { startBlockchainRetryWorker, getBlockchainRetryQueue } from './workers/blockchain.worker.js';
+import { startForageTriggerWorker } from './workers/forage-trigger.worker.js';
 
 const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds forced exit
 
@@ -40,6 +41,7 @@ try {
   startPayoutWorker();
   startNotificationWorker();
   startBlockchainRetryWorker();
+  startForageTriggerWorker();
   logger.info('Background workers started');
 } catch (error) {
   logger.warn('Workers failed to start', { message: error.message });
