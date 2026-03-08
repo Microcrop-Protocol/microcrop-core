@@ -53,14 +53,27 @@ export const quoteSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  livestockPeril: Joi.string().valid('DROUGHT_PASTURE', 'DISEASE_OUTBREAK', 'HEAT_STRESS').when('productType', {
+  season: Joi.string().valid('LRLD', 'SRSD').when('productType', {
     is: 'LIVESTOCK',
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  sumInsured: Joi.number().min(1000).required(),
-  coverageType: Joi.string().valid(...allCoverageTypes).required(),
-  durationDays: Joi.number().integer().min(30).max(365).required(),
+  // sumInsured auto-calculated for IBLI livestock, required for crop
+  sumInsured: Joi.number().min(1000).when('productType', {
+    is: 'CROP',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  coverageType: Joi.string().valid(...allCoverageTypes).when('productType', {
+    is: 'CROP',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  durationDays: Joi.number().integer().min(30).max(365).when('productType', {
+    is: 'CROP',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
 });
 
 export const purchaseSchema = Joi.object({
@@ -76,12 +89,24 @@ export const purchaseSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  livestockPeril: Joi.string().valid('DROUGHT_PASTURE', 'DISEASE_OUTBREAK', 'HEAT_STRESS').when('productType', {
+  season: Joi.string().valid('LRLD', 'SRSD').when('productType', {
     is: 'LIVESTOCK',
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  sumInsured: Joi.number().min(1000).required(),
-  coverageType: Joi.string().valid(...allCoverageTypes).required(),
-  durationDays: Joi.number().integer().min(30).max(365).required(),
+  sumInsured: Joi.number().min(1000).when('productType', {
+    is: 'CROP',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  coverageType: Joi.string().valid(...allCoverageTypes).when('productType', {
+    is: 'CROP',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  durationDays: Joi.number().integer().min(30).max(365).when('productType', {
+    is: 'CROP',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
 });
