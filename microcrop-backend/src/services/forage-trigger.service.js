@@ -4,7 +4,10 @@ import { PLATFORM_FEE_PERCENT } from '../utils/constants.js';
 
 const forageTriggerService = {
   async evaluateTrigger(data) {
-    const { insuranceUnitId, season, year, cumulativeNDVI, source } = data;
+    const { insuranceUnitId, season, year, source } = data;
+    // Accept either raw ndviValue (single reading) or pre-computed cumulativeNDVI
+    const rawNdvi = data.ndviValue !== undefined ? parseFloat(data.ndviValue) : null;
+    const providedCumulative = data.cumulativeNDVI !== undefined ? parseFloat(data.cumulativeNDVI) : null;
 
     const unit = await prisma.insuranceUnit.findUnique({
       where: { id: insuranceUnitId },
@@ -14,6 +17,25 @@ const forageTriggerService = {
       throw new Error(`Insurance unit ${insuranceUnitId} not found`);
     }
 
+    // Compute cumulative NDVI: average of all readings this season (including new one)
+    let cumulativeNDVI;
+
+    if (providedCumulative !== null) {
+      // CRE sent pre-computed cumulative
+      cumulativeNDVI = providedCumulative;
+    } else if (rawNdvi !== null) {
+      // CRE sent a single reading — compute cumulative from all stored readings + this one
+      const existingReadings = await prisma.insuranceUnitNDVI.findMany({
+        where: { insuranceUnitId, season, year },
+        select: { ndviValue: true },
+      });
+
+      const allValues = [...existingReadings.map((r) => parseFloat(r.ndviValue)), rawNdvi];
+      cumulativeNDVI = parseFloat((allValues.reduce((a, b) => a + b, 0) / allValues.length).toFixed(3));
+    } else {
+      throw new Error('Either ndviValue or cumulativeNDVI must be provided');
+    }
+
     // Store NDVI reading
     await prisma.insuranceUnitNDVI.create({
       data: {
@@ -21,7 +43,7 @@ const forageTriggerService = {
         season,
         year,
         captureDate: new Date(),
-        ndviValue: cumulativeNDVI, // latest cumulative reading
+        ndviValue: rawNdvi ?? cumulativeNDVI,
         cumulativeNDVI,
         source: source || 'MODIS',
       },
@@ -32,7 +54,7 @@ const forageTriggerService = {
       ? parseFloat(unit.strikeLevelLRLD)
       : parseFloat(unit.strikeLevelSRSD);
 
-    const ndviValue = parseFloat(cumulativeNDVI);
+    const ndviValue = cumulativeNDVI;
 
     // Check if NDVI breaches strike level
     if (ndviValue >= strikeLevel) {
