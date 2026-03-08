@@ -24,6 +24,39 @@ export const CROP_FACTORS = {
 
 export const BASE_PREMIUM_RATE = 0.08;
 
+// Livestock insurance
+export const BASE_LIVESTOCK_RATE = 0.065; // 6.5% base rate (higher risk than crops)
+
+export const LIVESTOCK_FACTORS = {
+  CATTLE: 1.0,
+  GOAT: 0.85,
+  SHEEP: 0.9,
+  CAMEL: 0.8,
+  POULTRY: 1.3,
+};
+
+export const LIVESTOCK_PERIL_FACTORS = {
+  DROUGHT_PASTURE: 1.0,
+  DISEASE_OUTBREAK: 1.2,
+  HEAT_STRESS: 0.9,
+};
+
+export const LIVESTOCK_REGION_FACTORS = {
+  // Arid/semi-arid counties (higher risk)
+  TURKANA: 1.4,
+  MARSABIT: 1.35,
+  WAJIR: 1.3,
+  MANDERA: 1.3,
+  GARISSA: 1.25,
+  ISIOLO: 1.2,
+  SAMBURU: 1.2,
+  TANA_RIVER: 1.15,
+  BARINGO: 1.1,
+  LAIKIPIA: 1.05,
+  // Default for other counties
+  DEFAULT: 1.0,
+};
+
 export const PLATFORM_FEE_PERCENT = 5;
 
 export const DURATION_FACTORS = {
