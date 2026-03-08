@@ -121,6 +121,15 @@ export const dashboardOrgController = {
       next(error);
     }
   },
+
+  async getForageAlerts(req, res, next) {
+    try {
+      const result = await dashboardOrgService.getForageAlerts(req.organization.id, req.query);
+      res.json(formatPaginatedResponse(result.data, result.total, result.page, result.limit));
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 export default dashboardOrgController;
