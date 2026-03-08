@@ -96,6 +96,23 @@ export const dashboardOrgController = {
     }
   },
 
+  async getHerds(req, res, next) {
+    try {
+      const result = await dashboardOrgService.getHerds(req.organization.id, req.query);
+      res.json(formatResponse({
+        ...formatPaginatedResponse(
+          result.herds.data,
+          result.herds.total,
+          result.herds.page,
+          result.herds.limit,
+        ),
+        livestockDistribution: result.livestockDistribution,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getActivity(req, res, next) {
     try {
       const result = await dashboardOrgService.getActivity(req.organization.id, req.query);
