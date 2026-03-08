@@ -55,12 +55,22 @@ router.get('/active-policies', async (_req, res, next) => {
         id: true,
         policyId: true,
         policyNumber: true,
+        productType: true,
         sumInsured: true,
+        livestockPeril: true,
         plot: {
           select: {
             latitude: true,
             longitude: true,
             cropType: true,
+          },
+        },
+        herd: {
+          select: {
+            latitude: true,
+            longitude: true,
+            livestockType: true,
+            headCount: true,
           },
         },
         farmer: {
@@ -71,15 +81,32 @@ router.get('/active-policies', async (_req, res, next) => {
       },
     });
 
-    const result = policies.map((p) => ({
-      policyId: p.id,
-      onChainPolicyId: p.policyId || p.policyNumber,
-      plotLatitude: parseFloat(p.plot.latitude),
-      plotLongitude: parseFloat(p.plot.longitude),
-      cropType: p.plot.cropType,
-      sumInsured: parseFloat(p.sumInsured),
-      farmerWallet: p.farmer?.walletAddress || null,
-    }));
+    const result = policies.map((p) => {
+      if (p.productType === 'LIVESTOCK' && p.herd) {
+        return {
+          policyId: p.id,
+          onChainPolicyId: p.policyId || p.policyNumber,
+          productType: 'LIVESTOCK',
+          latitude: parseFloat(p.herd.latitude),
+          longitude: parseFloat(p.herd.longitude),
+          livestockType: p.herd.livestockType,
+          headCount: p.herd.headCount,
+          livestockPeril: p.livestockPeril,
+          sumInsured: parseFloat(p.sumInsured),
+          farmerWallet: p.farmer?.walletAddress || null,
+        };
+      }
+      return {
+        policyId: p.id,
+        onChainPolicyId: p.policyId || p.policyNumber,
+        productType: 'CROP',
+        latitude: p.plot ? parseFloat(p.plot.latitude) : null,
+        longitude: p.plot ? parseFloat(p.plot.longitude) : null,
+        cropType: p.plot?.cropType || null,
+        sumInsured: parseFloat(p.sumInsured),
+        farmerWallet: p.farmer?.walletAddress || null,
+      };
+    });
 
     logger.info(`Internal API: returning ${result.length} active policies`);
 
