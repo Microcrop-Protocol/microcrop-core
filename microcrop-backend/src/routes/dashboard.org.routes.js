@@ -19,6 +19,7 @@ router.get('/payouts', validate(paginatedDateRangeSchema, 'query'), dashboardOrg
 router.get('/damage-assessments', validate(paginatedDateRangeSchema, 'query'), dashboardOrgController.getDamageAssessments);
 router.get('/financials', validate(granularitySchema, 'query'), dashboardOrgController.getFinancials);
 router.get('/plots', validate(paginatedDateRangeSchema, 'query'), dashboardOrgController.getPlots);
+router.get('/herds', validate(paginatedDateRangeSchema, 'query'), dashboardOrgController.getHerds);
 router.get('/activity', validate(activitySchema, 'query'), dashboardOrgController.getActivity);
 
 export const dashboardOrgRouter = router;
