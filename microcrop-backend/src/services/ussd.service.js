@@ -1,19 +1,16 @@
 import prisma from '../config/database.js';
 import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
-import { normalizePhone, generatePolicyNumber } from '../utils/helpers.js';
+import { normalizePhone, generatePolicyNumber, getSeasonDates, getSeasonYear } from '../utils/helpers.js';
 import {
   getDurationFactor,
   BASE_PREMIUM_RATE,
-  BASE_LIVESTOCK_RATE,
   PLATFORM_FEE_PERCENT,
   CROP_FACTORS,
-  LIVESTOCK_FACTORS,
-  LIVESTOCK_PERIL_FACTORS,
-  LIVESTOCK_REGION_FACTORS,
   MIN_SUM_INSURED,
   MAX_SUM_INSURED,
 } from '../utils/constants.js';
+import { IBLI_SEASONS } from '../utils/ibli.constants.js';
 import paymentService from './payment.service.js';
 import { addNotificationJob } from '../workers/notification.worker.js';
 
@@ -110,17 +107,11 @@ const ussdService = {
         case 'LIVESTOCK_SELECT_HERD':
           response = await this._handleLivestockSelectHerd(session, currentInput);
           break;
-        case 'LIVESTOCK_SELECT_PERIL':
-          response = await this._handleLivestockSelectPeril(session, currentInput);
+        case 'IBLI_SELECT_SEASON':
+          response = await this._handleIBLISelectSeason(session, currentInput);
           break;
-        case 'LIVESTOCK_SUM':
-          response = await this._handleLivestockSum(session, currentInput);
-          break;
-        case 'LIVESTOCK_DURATION':
-          response = await this._handleLivestockDuration(session, currentInput);
-          break;
-        case 'LIVESTOCK_CONFIRM':
-          response = await this._handleLivestockConfirm(session, currentInput, organization, normalizedPhone);
+        case 'IBLI_CONFIRM':
+          response = await this._handleIBLIConfirm(session, currentInput, organization, normalizedPhone);
           break;
         default:
           response = 'END An error occurred. Please try again.';
@@ -494,12 +485,16 @@ const ussdService = {
     return `CON Select policy to pay:\n${list}`;
   },
 
-  // ── Buy Livestock Insurance Flow ──────────────────────────────────────
+  // ── Buy Livestock Insurance (IBLI) Flow ──────────────────────────────
 
   async _handleLivestockStart(session, input, organization, phoneNumber) {
     const farmer = await prisma.farmer.findFirst({
       where: { phoneNumber, organizationId: organization.id },
-      include: { herds: true },
+      include: {
+        herds: {
+          include: { insuranceUnit: { select: { id: true, county: true, unitCode: true } } },
+        },
+      },
     });
 
     if (!farmer) {
@@ -519,16 +514,26 @@ const ussdService = {
       return 'END No herds found. Contact your agent to register herds.';
     }
 
+    // Only show herds that have an insurance unit
+    const eligibleHerds = farmer.herds.filter((h) => h.insuranceUnit);
+    if (eligibleHerds.length === 0) {
+      return 'END Your county is not in a KLIP coverage area. Contact your agent.';
+    }
+
     session.data.farmerId = farmer.id;
-    session.data.farmerCounty = farmer.county;
-    session.data.herds = farmer.herds.map((h) => ({
+    session.data.herds = eligibleHerds.map((h) => ({
       id: h.id,
       name: h.name,
       livestockType: h.livestockType,
       headCount: h.headCount,
+      tluCount: parseFloat(h.tluCount),
+      insuranceUnitId: h.insuranceUnit.id,
+      county: h.insuranceUnit.county,
     }));
 
-    const herdList = farmer.herds.map((h, i) => `${i + 1}. ${h.name} (${h.headCount} ${h.livestockType.toLowerCase()})`).join('\n');
+    const herdList = eligibleHerds.map((h, i) =>
+      `${i + 1}. ${h.name} (${h.headCount} ${h.livestockType.toLowerCase()}, ${parseFloat(h.tluCount)} TLU)`
+    ).join('\n');
     session.state = 'LIVESTOCK_SELECT_HERD';
     return `CON Select herd:\n${herdList}`;
   },
@@ -542,63 +547,63 @@ const ussdService = {
     }
 
     session.data.selectedHerd = herds[herdIndex];
-    session.state = 'LIVESTOCK_SELECT_PERIL';
-    return 'CON Select coverage:\n1. Drought/Pasture\n2. Disease Outbreak\n3. Heat Stress';
+    session.state = 'IBLI_SELECT_SEASON';
+
+    const seasonList = Object.entries(IBLI_SEASONS)
+      .map(([key, val], i) => `${i + 1}. ${val.label}`)
+      .join('\n');
+    return `CON Select season:\n${seasonList}`;
   },
 
-  async _handleLivestockSelectPeril(session, input) {
-    const perilMap = { '1': 'DROUGHT_PASTURE', '2': 'DISEASE_OUTBREAK', '3': 'HEAT_STRESS' };
-    const perilNames = { '1': 'Drought/Pasture', '2': 'Disease Outbreak', '3': 'Heat Stress' };
+  async _handleIBLISelectSeason(session, input) {
+    const seasonKeys = Object.keys(IBLI_SEASONS);
+    const seasonIndex = parseInt(input, 10) - 1;
 
-    if (!perilMap[input]) {
+    if (seasonIndex < 0 || seasonIndex >= seasonKeys.length) {
       return 'END Invalid selection.';
     }
 
-    session.data.livestockPeril = perilMap[input];
-    session.data.perilName = perilNames[input];
-    session.state = 'LIVESTOCK_SUM';
-    return 'CON Enter sum insured (KES):';
-  },
-
-  async _handleLivestockSum(session, input) {
-    const sumInsured = parseFloat(input);
-    if (isNaN(sumInsured) || sumInsured < MIN_SUM_INSURED || sumInsured > MAX_SUM_INSURED) {
-      return `END Invalid amount. Must be between ${MIN_SUM_INSURED.toLocaleString()} and ${MAX_SUM_INSURED.toLocaleString()} KES.`;
-    }
-
-    session.data.sumInsured = sumInsured;
-    session.state = 'LIVESTOCK_DURATION';
-    return 'CON Coverage duration (days, 30-365):';
-  },
-
-  async _handleLivestockDuration(session, input) {
-    const duration = parseInt(input, 10);
-    if (isNaN(duration) || duration < 30 || duration > 365) {
-      return 'END Invalid duration. Must be between 30 and 365 days.';
-    }
-
-    session.data.duration = duration;
+    const season = seasonKeys[seasonIndex];
+    session.data.season = season;
 
     const herd = session.data.selectedHerd;
-    const durationFactor = getDurationFactor(duration);
-    const livestockFactor = LIVESTOCK_FACTORS[herd.livestockType] || 1.0;
-    const perilFactor = LIVESTOCK_PERIL_FACTORS[session.data.livestockPeril] || 1.0;
-    const countyKey = session.data.farmerCounty?.toUpperCase().replace(/[\s-]/g, '_') || 'DEFAULT';
-    const regionFactor = LIVESTOCK_REGION_FACTORS[countyKey] || LIVESTOCK_REGION_FACTORS.DEFAULT;
 
-    const premium = Math.round(session.data.sumInsured * BASE_LIVESTOCK_RATE * livestockFactor * perilFactor * regionFactor * durationFactor);
+    // Fetch premium rate from insurance unit
+    const unit = await prisma.insuranceUnit.findUnique({
+      where: { id: herd.insuranceUnitId },
+    });
+
+    if (!unit) {
+      return 'END Insurance unit not found. Contact your agent.';
+    }
+
+    const tluCount = herd.tluCount;
+    const premiumRate = season === 'LRLD' ? parseFloat(unit.premiumRateLRLD) : parseFloat(unit.premiumRateSRSD);
+    const valuePerTLU = parseFloat(unit.valuePerTLU);
+    const sumInsured = Math.round(tluCount * valuePerTLU);
+    const premium = Math.round(tluCount * premiumRate);
     const platformFee = Math.round((premium * PLATFORM_FEE_PERCENT) / 100);
     const netPremium = premium - platformFee;
 
+    const year = getSeasonYear(season);
+    const dates = getSeasonDates(season, year);
+    const durationDays = Math.ceil((dates.endDate - dates.startDate) / (1000 * 60 * 60 * 24));
+
+    session.data.sumInsured = sumInsured;
     session.data.premium = premium;
     session.data.platformFee = platformFee;
     session.data.netPremium = netPremium;
+    session.data.startDate = dates.startDate.toISOString();
+    session.data.endDate = dates.endDate.toISOString();
+    session.data.durationDays = durationDays;
+    session.data.insuranceUnitId = unit.id;
 
-    session.state = 'LIVESTOCK_CONFIRM';
-    return `CON ${herd.name} - ${session.data.perilName}\nPremium: KES ${premium}\n1. Confirm\n2. Cancel`;
+    const seasonLabel = IBLI_SEASONS[season].label;
+    session.state = 'IBLI_CONFIRM';
+    return `CON ${herd.name} | ${seasonLabel}\n${tluCount} TLU | Sum: KES ${sumInsured.toLocaleString()}\nPremium: KES ${premium.toLocaleString()}\n1. Confirm\n2. Cancel`;
   },
 
-  async _handleLivestockConfirm(session, input, organization, phoneNumber) {
+  async _handleIBLIConfirm(session, input, organization, phoneNumber) {
     if (input === '1') {
       try {
         const farmer = await prisma.farmer.findFirst({
@@ -609,19 +614,22 @@ const ussdService = {
           return 'END Error: Farmer not found.';
         }
 
-        const now = new Date();
-        const endDate = new Date(now);
-        endDate.setDate(endDate.getDate() + session.data.duration);
+        // Check for duplicate
+        const existing = await prisma.policy.findFirst({
+          where: {
+            herdId: session.data.selectedHerd.id,
+            season: session.data.season,
+            insuranceUnitId: session.data.insuranceUnitId,
+            status: { in: ['PENDING', 'ACTIVE'] },
+          },
+        });
+
+        if (existing) {
+          return `END You already have a ${session.data.season} policy for this herd.`;
+        }
 
         const policyNumber = generatePolicyNumber();
         const poolAddress = organization.livestockPoolAddress || organization.poolAddress;
-
-        // Map peril to coverage type
-        const coverageMap = {
-          DROUGHT_PASTURE: 'LIVESTOCK_DROUGHT',
-          DISEASE_OUTBREAK: 'LIVESTOCK_DISEASE',
-          HEAT_STRESS: 'LIVESTOCK_COMPREHENSIVE',
-        };
 
         const policy = await prisma.policy.create({
           data: {
@@ -631,15 +639,17 @@ const ussdService = {
             farmerId: farmer.id,
             herdId: session.data.selectedHerd.id,
             productType: 'LIVESTOCK',
-            coverageType: coverageMap[session.data.livestockPeril] || 'LIVESTOCK_COMPREHENSIVE',
-            livestockPeril: session.data.livestockPeril,
+            coverageType: 'LIVESTOCK_DROUGHT',
+            livestockPeril: 'DROUGHT_PASTURE',
+            season: session.data.season,
+            insuranceUnitId: session.data.insuranceUnitId,
             sumInsured: session.data.sumInsured,
             premium: session.data.premium,
             platformFee: session.data.platformFee,
             netPremium: session.data.netPremium,
-            startDate: now,
-            endDate,
-            durationDays: session.data.duration,
+            startDate: new Date(session.data.startDate),
+            endDate: new Date(session.data.endDate),
+            durationDays: session.data.durationDays,
             status: 'PENDING',
           },
         });
@@ -651,15 +661,16 @@ const ussdService = {
             amount: session.data.premium,
           });
 
+          const seasonLabel = IBLI_SEASONS[session.data.season].label;
           addNotificationJob({
             type: 'POLICY_CREATED',
             phoneNumber,
-            message: `${organization.brandName}: Livestock policy ${policyNumber} created for ${session.data.selectedHerd.name} (${session.data.perilName}). Sum insured: KES ${session.data.sumInsured}. Check your phone for M-Pesa prompt of KES ${session.data.premium}.`,
-          }).catch((err) => logger.warn('Failed to queue livestock policy SMS', { error: err.message }));
+            message: `${organization.brandName}: IBLI policy ${policyNumber} created for ${session.data.selectedHerd.name} (${seasonLabel}). Sum insured: KES ${session.data.sumInsured}. Check your phone for M-Pesa prompt of KES ${session.data.premium}.`,
+          }).catch((err) => logger.warn('Failed to queue IBLI policy SMS', { error: err.message }));
 
           return `END Policy ${policyNumber} created!\nCheck your phone for M-Pesa prompt.\nPremium: KES ${session.data.premium}`;
         } catch (paymentError) {
-          logger.error('USSD livestock M-Pesa initiation failed', {
+          logger.error('USSD IBLI M-Pesa initiation failed', {
             policyId: policy.id,
             error: paymentError.message,
           });
@@ -667,13 +678,13 @@ const ussdService = {
           addNotificationJob({
             type: 'POLICY_PAYMENT_FAILED',
             phoneNumber,
-            message: `${organization.brandName}: Livestock policy ${policyNumber} created but payment could not start. Dial back and select "Pay Pending" to retry.`,
+            message: `${organization.brandName}: IBLI policy ${policyNumber} created but payment could not start. Dial back and select "Pay Pending" to retry.`,
           }).catch((err) => logger.warn('Failed to queue payment failure SMS', { error: err.message }));
 
           return `END Policy ${policyNumber} created.\nPayment failed to start.\nDial back and select "Pay Pending" to retry.`;
         }
       } catch (error) {
-        logger.error('USSD livestock policy creation failed', { error: error.message });
+        logger.error('USSD IBLI policy creation failed', { error: error.message });
         return 'END Failed to create policy. Please try again.';
       }
     } else if (input === '2') {
