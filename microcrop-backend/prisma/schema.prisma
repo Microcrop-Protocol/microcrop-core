@@ -54,9 +54,13 @@ model Organization {
   totalPayoutsProcessed  Decimal  @default(0) @db.Decimal(15, 2)
   lastPolicyCreatedAt    DateTime?
 
+  // Livestock pool (separate from crop pool)
+  livestockPoolAddress String? @unique
+
   // Relations
   farmers      Farmer[]
   plots        Plot[]
+  herds        Herd[]
   policies     Policy[]
   payouts      Payout[]
   transactions Transaction[]
@@ -176,6 +180,7 @@ model Farmer {
 
   // Relations
   plots        Plot[]
+  herds        Herd[]
   policies     Policy[]
   transactions Transaction[]
 
@@ -249,6 +254,63 @@ enum CropType {
 }
 
 // ============================================
+// HERD (Scoped to Organization — Livestock)
+// ============================================
+
+model Herd {
+  id String @id @default(uuid())
+
+  // Multi-tenant
+  farmerId       String
+  farmer         Farmer       @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Herd details
+  name           String
+  livestockType  LivestockType
+  headCount      Int
+  estimatedValue Decimal       @db.Decimal(12, 2) // per head, in KES
+
+  // Location (grazing area for weather/NDVI)
+  latitude  Decimal @db.Decimal(10, 8)
+  longitude Decimal @db.Decimal(11, 8)
+
+  // Weather station assignment
+  weatherStationId String?
+
+  // Relations
+  policies Policy[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([farmerId])
+  @@index([livestockType])
+  @@index([organizationId, farmerId])
+}
+
+enum LivestockType {
+  CATTLE
+  GOAT
+  SHEEP
+  CAMEL
+  POULTRY
+}
+
+enum LivestockPeril {
+  DROUGHT_PASTURE
+  DISEASE_OUTBREAK
+  HEAT_STRESS
+}
+
+enum InsuranceProduct {
+  CROP
+  LIVESTOCK
+}
+
+// ============================================
 // POLICY (Scoped to Organization)
 // ============================================
 
@@ -265,14 +327,20 @@ model Policy {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   poolAddress    String
 
+  // Product type
+  productType InsuranceProduct @default(CROP)
+
   // Policy ownership
   farmerId String
   farmer   Farmer @relation(fields: [farmerId], references: [id], onDelete: Restrict)
-  plotId   String
-  plot     Plot   @relation(fields: [plotId], references: [id], onDelete: Restrict)
+  plotId   String?
+  plot     Plot?  @relation(fields: [plotId], references: [id], onDelete: Restrict)
+  herdId   String?
+  herd     Herd?  @relation(fields: [herdId], references: [id], onDelete: Restrict)
 
   // Coverage details
-  coverageType CoverageType
+  coverageType   CoverageType
+  livestockPeril LivestockPeril?
   sumInsured   Decimal @db.Decimal(12, 2)
   premium      Decimal @db.Decimal(12, 2)
   platformFee  Decimal @db.Decimal(12, 2)
@@ -314,6 +382,8 @@ model Policy {
   @@index([status])
   @@index([startDate, endDate])
   @@index([poolAddress])
+  @@index([productType])
+  @@index([herdId])
 }
 
 enum CoverageType {
@@ -321,6 +391,9 @@ enum CoverageType {
   FLOOD
   BOTH
   COMPREHENSIVE
+  LIVESTOCK_DROUGHT
+  LIVESTOCK_DISEASE
+  LIVESTOCK_COMPREHENSIVE
 }
 
 enum PolicyStatus {
@@ -345,6 +418,7 @@ model DamageAssessment {
   // Damage calculation (from CRE breakdown)
   weatherDamage   Decimal? @db.Decimal(5, 2)
   satelliteDamage Decimal? @db.Decimal(5, 2)
+  ndviDamage      Decimal? @db.Decimal(5, 2) // Pasture degradation (livestock)
   combinedDamage  Decimal? @db.Decimal(5, 2)
 
   // On-chain damage report (simplified from PayoutReceiver event)
