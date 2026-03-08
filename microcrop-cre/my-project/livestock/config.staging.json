@@ -1,0 +1,6 @@
+{
+  "schedule": "0 6 1,17 * *",
+  "backendApiUrl": "http://localhost:3000",
+  "sentinelApiUrl": "https://services.sentinel-hub.com/api/v1",
+  "ndviLookbackDays": 16
+}
