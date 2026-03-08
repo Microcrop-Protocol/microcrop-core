@@ -1,12 +1,8 @@
 import prisma from '../config/database.js';
-import { generatePolicyNumber, paginate } from '../utils/helpers.js';
+import { generatePolicyNumber, paginate, calculateTLU, getSeasonDates, getSeasonYear } from '../utils/helpers.js';
 import {
   BASE_PREMIUM_RATE,
-  BASE_LIVESTOCK_RATE,
   CROP_FACTORS,
-  LIVESTOCK_FACTORS,
-  LIVESTOCK_PERIL_FACTORS,
-  LIVESTOCK_REGION_FACTORS,
   PLATFORM_FEE_PERCENT,
   getDurationFactor,
 } from '../utils/constants.js';
@@ -16,7 +12,7 @@ import logger from '../utils/logger.js';
 const policyService = {
   async calculateQuote(organizationId, data) {
     try {
-      const { farmerId, plotId, herdId, sumInsured, coverageType, durationDays, productType, livestockPeril } = data;
+      const { farmerId, plotId, herdId, sumInsured, coverageType, durationDays, productType, season } = data;
 
       const farmer = await prisma.farmer.findFirst({
         where: { id: farmerId, organizationId },
@@ -25,56 +21,59 @@ const policyService = {
         throw new NotFoundError('Farmer not found in this organization');
       }
 
-      const durationFactor = getDurationFactor(durationDays);
-
-      // Livestock quote
+      // IBLI livestock quote — TLU-based pricing
       if (productType === 'LIVESTOCK') {
         if (!herdId) throw new ValidationError('herdId is required for livestock insurance');
-        if (!livestockPeril) throw new ValidationError('livestockPeril is required for livestock insurance');
+        if (!season) throw new ValidationError('season is required for IBLI livestock insurance');
 
         const herd = await prisma.herd.findFirst({
           where: { id: herdId, organizationId },
+          include: { insuranceUnit: true },
         });
         if (!herd) throw new NotFoundError('Herd not found in this organization');
+        if (!herd.insuranceUnit) throw new ValidationError('Herd has no insurance unit. Farmer county must match a KLIP county.');
 
-        const baseRate = BASE_LIVESTOCK_RATE;
-        const livestockFactor = LIVESTOCK_FACTORS[herd.livestockType] || 1.0;
-        const perilFactor = LIVESTOCK_PERIL_FACTORS[livestockPeril] || 1.0;
-        const countyKey = farmer.county?.toUpperCase().replace(/[\s-]/g, '_') || 'DEFAULT';
-        const regionFactor = LIVESTOCK_REGION_FACTORS[countyKey] || LIVESTOCK_REGION_FACTORS.DEFAULT;
-
-        const premium = parseFloat(
-          (sumInsured * baseRate * livestockFactor * perilFactor * regionFactor * durationFactor).toFixed(2)
-        );
-        const platformFee = parseFloat(
-          ((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2)
-        );
+        const unit = herd.insuranceUnit;
+        const tluCount = parseFloat(herd.tluCount);
+        const premiumRate = season === 'LRLD' ? parseFloat(unit.premiumRateLRLD) : parseFloat(unit.premiumRateSRSD);
+        const valuePerTLU = parseFloat(unit.valuePerTLU);
+        const computedSumInsured = parseFloat((tluCount * valuePerTLU).toFixed(2));
+        const premium = parseFloat((tluCount * premiumRate).toFixed(2));
+        const platformFee = parseFloat(((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2));
         const netPremium = parseFloat((premium - platformFee).toFixed(2));
+
+        const year = getSeasonYear(season);
+        const { startDate, endDate } = getSeasonDates(season, year);
+        const computedDurationDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
 
         return {
           productType: 'LIVESTOCK',
-          sumInsured,
+          season,
+          sumInsured: computedSumInsured,
           premium,
           platformFee,
           netPremium,
-          coverageType,
-          livestockPeril,
-          durationDays,
+          coverageType: 'LIVESTOCK_DROUGHT',
+          durationDays: computedDurationDays,
+          startDate,
+          endDate,
           breakdown: {
-            baseRate,
-            livestockFactor,
-            perilFactor,
-            regionFactor,
-            durationFactor,
+            tluCount,
+            valuePerTLU,
+            premiumRate,
+            county: unit.county,
+            unitCode: unit.unitCode,
             livestockType: herd.livestockType,
             headCount: herd.headCount,
-            calculation: `${sumInsured} * ${baseRate} * ${livestockFactor} * ${perilFactor} * ${regionFactor} * ${durationFactor} = ${premium}`,
+            calculation: `${tluCount} TLU * ${premiumRate} KES/TLU = ${premium} KES`,
           },
         };
       }
 
       // Crop quote (existing logic)
       if (!plotId) throw new ValidationError('plotId is required for crop insurance');
+
+      const durationFactor = getDurationFactor(durationDays);
 
       const plot = await prisma.plot.findFirst({
         where: { id: plotId, organizationId },
@@ -118,7 +117,7 @@ const policyService = {
 
   async purchase(organizationId, data) {
     try {
-      const { farmerId, plotId, herdId, sumInsured, coverageType, durationDays, productType, livestockPeril } = data;
+      const { farmerId, plotId, herdId, sumInsured, coverageType, durationDays, productType, season } = data;
 
       const policy = await prisma.$transaction(async (tx) => {
         const farmer = await tx.farmer.findFirst({
@@ -131,30 +130,58 @@ const policyService = {
           throw new ValidationError('Farmer KYC must be approved before purchasing a policy');
         }
 
-        const durationFactor = getDurationFactor(durationDays);
         let premium, platformFee, netPremium;
         let resolvedPlotId = null;
         let resolvedHerdId = null;
+        let resolvedSumInsured = sumInsured;
+        let resolvedCoverageType = coverageType;
+        let resolvedDurationDays = durationDays;
+        let resolvedSeason = null;
+        let resolvedInsuranceUnitId = null;
+        let startDate, endDate;
 
         if (productType === 'LIVESTOCK') {
           if (!herdId) throw new ValidationError('herdId is required for livestock insurance');
-          if (!livestockPeril) throw new ValidationError('livestockPeril is required for livestock insurance');
+          if (!season) throw new ValidationError('season is required for IBLI livestock insurance');
 
           const herd = await tx.herd.findFirst({
             where: { id: herdId, farmerId, organizationId },
+            include: { insuranceUnit: true },
           });
           if (!herd) throw new NotFoundError('Herd not found for this farmer in this organization');
+          if (!herd.insuranceUnit) throw new ValidationError('Herd has no insurance unit. Farmer county must match a KLIP county.');
 
           resolvedHerdId = herdId;
+          resolvedSeason = season;
+          resolvedInsuranceUnitId = herd.insuranceUnitId;
+          resolvedCoverageType = 'LIVESTOCK_DROUGHT';
 
-          const livestockFactor = LIVESTOCK_FACTORS[herd.livestockType] || 1.0;
-          const perilFactor = LIVESTOCK_PERIL_FACTORS[livestockPeril] || 1.0;
-          const countyKey = farmer.county?.toUpperCase().replace(/[\s-]/g, '_') || 'DEFAULT';
-          const regionFactor = LIVESTOCK_REGION_FACTORS[countyKey] || LIVESTOCK_REGION_FACTORS.DEFAULT;
+          const unit = herd.insuranceUnit;
+          const tluCount = parseFloat(herd.tluCount);
+          const premiumRate = season === 'LRLD' ? parseFloat(unit.premiumRateLRLD) : parseFloat(unit.premiumRateSRSD);
+          const valuePerTLU = parseFloat(unit.valuePerTLU);
 
-          premium = parseFloat(
-            (sumInsured * BASE_LIVESTOCK_RATE * livestockFactor * perilFactor * regionFactor * durationFactor).toFixed(2)
-          );
+          resolvedSumInsured = parseFloat((tluCount * valuePerTLU).toFixed(2));
+          premium = parseFloat((tluCount * premiumRate).toFixed(2));
+
+          const year = getSeasonYear(season);
+          const dates = getSeasonDates(season, year);
+          startDate = dates.startDate;
+          endDate = dates.endDate;
+          resolvedDurationDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+
+          // Check for duplicate active policy on same herd + season
+          const existing = await tx.policy.findFirst({
+            where: {
+              herdId,
+              season,
+              status: { in: ['PENDING', 'ACTIVE'] },
+              insuranceUnitId: resolvedInsuranceUnitId,
+            },
+          });
+          if (existing) {
+            throw new ValidationError(`Herd already has an active/pending ${season} policy`);
+          }
         } else {
           if (!plotId) throw new ValidationError('plotId is required for crop insurance');
 
@@ -165,10 +192,16 @@ const policyService = {
 
           resolvedPlotId = plotId;
 
+          const durationFactor = getDurationFactor(durationDays);
           const cropFactor = CROP_FACTORS[plot.cropType] || 1.0;
           premium = parseFloat(
             (sumInsured * BASE_PREMIUM_RATE * cropFactor * durationFactor).toFixed(2)
           );
+
+          const now = new Date();
+          startDate = now;
+          endDate = new Date(now);
+          endDate.setDate(endDate.getDate() + durationDays);
         }
 
         platformFee = parseFloat(((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2));
@@ -181,10 +214,6 @@ const policyService = {
           ? (org.livestockPoolAddress || org.poolAddress || 'pending')
           : (org.poolAddress || 'pending');
 
-        const now = new Date();
-        const endDate = new Date(now);
-        endDate.setDate(endDate.getDate() + durationDays);
-
         const created = await tx.policy.create({
           data: {
             policyNumber,
@@ -194,15 +223,17 @@ const policyService = {
             plotId: resolvedPlotId,
             herdId: resolvedHerdId,
             productType: productType || 'CROP',
-            coverageType,
-            livestockPeril: productType === 'LIVESTOCK' ? livestockPeril : null,
-            sumInsured,
+            coverageType: resolvedCoverageType,
+            livestockPeril: productType === 'LIVESTOCK' ? 'DROUGHT_PASTURE' : null,
+            season: resolvedSeason,
+            insuranceUnitId: resolvedInsuranceUnitId,
+            sumInsured: resolvedSumInsured,
             premium,
             platformFee,
             netPremium,
-            startDate: now,
+            startDate,
             endDate,
-            durationDays,
+            durationDays: resolvedDurationDays,
             status: 'PENDING',
           },
         });
