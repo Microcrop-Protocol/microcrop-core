@@ -30,6 +30,7 @@ import { dashboardOrgRouter } from './routes/dashboard.org.routes.js';
 import { exportRouter } from './routes/export.routes.js';
 import { applicationRouter } from './routes/application.routes.js';
 import { invitationRouter } from './routes/invitation.routes.js';
+import { herdsRouter } from './routes/herds.routes.js';
 
 const app = express();
 
@@ -124,6 +125,7 @@ app.use('/api/platform', platformRouter);
 app.use('/api/organizations', organizationRouter);
 app.use('/api/farmers', farmersRouter);
 app.use('/api/plots', plotsRouter);
+app.use('/api/herds', herdsRouter);
 app.use('/api/policies', policiesRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/payouts', payoutsRouter);
