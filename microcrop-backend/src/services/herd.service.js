@@ -1,5 +1,6 @@
 import prisma from '../config/database.js';
 import { AppError } from '../utils/errors.js';
+import { calculateTLU } from '../utils/helpers.js';
 
 const herdService = {
   async create(organizationId, data) {
@@ -14,6 +15,18 @@ const herdService = {
       throw new AppError('Farmer not found in this organization', 404, 'FARMER_NOT_FOUND');
     }
 
+    // Auto-compute TLU
+    const tluCount = calculateTLU(livestockType, headCount);
+
+    // Auto-resolve insurance unit from farmer's county
+    let insuranceUnitId = null;
+    const unit = await prisma.insuranceUnit.findFirst({
+      where: { county: { equals: farmer.county, mode: 'insensitive' }, isActive: true },
+    });
+    if (unit) {
+      insuranceUnitId = unit.id;
+    }
+
     const herd = await prisma.herd.create({
       data: {
         farmerId,
@@ -22,13 +35,18 @@ const herdService = {
         livestockType,
         headCount,
         estimatedValue,
-        latitude,
-        longitude,
+        tluCount,
+        insuranceUnitId,
+        latitude: latitude || null,
+        longitude: longitude || null,
         weatherStationId,
       },
       include: {
         farmer: {
-          select: { id: true, firstName: true, lastName: true, phoneNumber: true },
+          select: { id: true, firstName: true, lastName: true, phoneNumber: true, county: true },
+        },
+        insuranceUnit: {
+          select: { id: true, county: true, unitCode: true },
         },
       },
     });
@@ -68,6 +86,9 @@ const herdService = {
           farmer: {
             select: { id: true, firstName: true, lastName: true, phoneNumber: true },
           },
+          insuranceUnit: {
+            select: { id: true, county: true, unitCode: true },
+          },
           _count: { select: { policies: true } },
         },
       }),
@@ -84,6 +105,9 @@ const herdService = {
         farmer: {
           select: { id: true, firstName: true, lastName: true, phoneNumber: true, county: true },
         },
+        insuranceUnit: {
+          select: { id: true, county: true, unitCode: true, premiumRateLRLD: true, premiumRateSRSD: true, valuePerTLU: true },
+        },
         policies: {
           orderBy: { createdAt: 'desc' },
           take: 10,
@@ -93,6 +117,7 @@ const herdService = {
             status: true,
             coverageType: true,
             livestockPeril: true,
+            season: true,
             sumInsured: true,
             premium: true,
             startDate: true,
@@ -118,12 +143,22 @@ const herdService = {
       throw new AppError('Herd not found', 404, 'HERD_NOT_FOUND');
     }
 
+    // Recompute TLU if headCount or livestockType changed
+    const newType = data.livestockType || herd.livestockType;
+    const newCount = data.headCount || herd.headCount;
+    if (data.headCount || data.livestockType) {
+      data.tluCount = calculateTLU(newType, newCount);
+    }
+
     const updated = await prisma.herd.update({
       where: { id: herdId },
       data,
       include: {
         farmer: {
           select: { id: true, firstName: true, lastName: true, phoneNumber: true },
+        },
+        insuranceUnit: {
+          select: { id: true, county: true, unitCode: true },
         },
       },
     });
