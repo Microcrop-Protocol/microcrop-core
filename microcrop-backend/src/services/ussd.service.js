@@ -2,7 +2,18 @@ import prisma from '../config/database.js';
 import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
 import { normalizePhone, generatePolicyNumber } from '../utils/helpers.js';
-import { getDurationFactor, BASE_PREMIUM_RATE, PLATFORM_FEE_PERCENT, CROP_FACTORS, MIN_SUM_INSURED, MAX_SUM_INSURED } from '../utils/constants.js';
+import {
+  getDurationFactor,
+  BASE_PREMIUM_RATE,
+  BASE_LIVESTOCK_RATE,
+  PLATFORM_FEE_PERCENT,
+  CROP_FACTORS,
+  LIVESTOCK_FACTORS,
+  LIVESTOCK_PERIL_FACTORS,
+  LIVESTOCK_REGION_FACTORS,
+  MIN_SUM_INSURED,
+  MAX_SUM_INSURED,
+} from '../utils/constants.js';
 import paymentService from './payment.service.js';
 import { addNotificationJob } from '../workers/notification.worker.js';
 
@@ -93,6 +104,24 @@ const ussdService = {
         case 'PAY_PENDING_CONFIRM':
           response = await this._handlePayPendingConfirm(session, currentInput, organization, normalizedPhone);
           break;
+        case 'LIVESTOCK_START':
+          response = await this._handleLivestockStart(session, currentInput, organization, normalizedPhone);
+          break;
+        case 'LIVESTOCK_SELECT_HERD':
+          response = await this._handleLivestockSelectHerd(session, currentInput);
+          break;
+        case 'LIVESTOCK_SELECT_PERIL':
+          response = await this._handleLivestockSelectPeril(session, currentInput);
+          break;
+        case 'LIVESTOCK_SUM':
+          response = await this._handleLivestockSum(session, currentInput);
+          break;
+        case 'LIVESTOCK_DURATION':
+          response = await this._handleLivestockDuration(session, currentInput);
+          break;
+        case 'LIVESTOCK_CONFIRM':
+          response = await this._handleLivestockConfirm(session, currentInput, organization, normalizedPhone);
+          break;
         default:
           response = 'END An error occurred. Please try again.';
       }
@@ -124,7 +153,7 @@ const ussdService = {
   // ── Main Menu ──────────────────────────────────────────────────────────
 
   async _handleMainMenu(session, input, organization) {
-    const menu = `CON Welcome to ${organization.brandName}\n1. Register\n2. Buy Insurance\n3. Check Policy\n4. My Account\n5. Pay Pending`;
+    const menu = `CON Welcome to ${organization.brandName}\n1. Register\n2. Buy Crop Insurance\n3. Buy Livestock Insurance\n4. Check Policy\n5. My Account\n6. Pay Pending`;
 
     if (!input) {
       return menu;
@@ -138,12 +167,15 @@ const ussdService = {
         session.state = 'BUY_START';
         return 'CON Loading...';
       case '3':
-        session.state = 'CHECK_POLICY';
+        session.state = 'LIVESTOCK_START';
         return 'CON Loading...';
       case '4':
-        session.state = 'MY_ACCOUNT';
+        session.state = 'CHECK_POLICY';
         return 'CON Loading...';
       case '5':
+        session.state = 'MY_ACCOUNT';
+        return 'CON Loading...';
+      case '6':
         session.state = 'PAY_PENDING_LIST';
         return 'CON Loading...';
       default:
@@ -383,7 +415,7 @@ const ussdService = {
         farmerId: farmer.id,
         status: { in: ['ACTIVE', 'PENDING'] },
       },
-      include: { plot: true },
+      include: { plot: true, herd: true },
       orderBy: { createdAt: 'desc' },
       take: 5,
     });
@@ -395,7 +427,10 @@ const ussdService = {
     const policyList = policies
       .map((p) => {
         const tag = p.status === 'PENDING' ? '[UNPAID]' : '[ACTIVE]';
-        return `${tag} ${p.policyNumber} - ${p.plot?.name || 'N/A'}`;
+        const asset = p.productType === 'LIVESTOCK'
+          ? (p.herd?.name || 'Herd')
+          : (p.plot?.name || 'N/A');
+        return `${tag} ${p.policyNumber} - ${asset}`;
       })
       .join('\n');
 
@@ -407,14 +442,14 @@ const ussdService = {
   async _handleMyAccount(organization, phoneNumber) {
     const farmer = await prisma.farmer.findFirst({
       where: { phoneNumber, organizationId: organization.id },
-      include: { plots: true },
+      include: { plots: true, herds: true },
     });
 
     if (!farmer) {
       return 'END Please register first.';
     }
 
-    return `END Name: ${farmer.firstName} ${farmer.lastName}\nPhone: ${farmer.phoneNumber}\nKYC: ${farmer.kycStatus}\nPlots: ${farmer.plots?.length || 0}`;
+    return `END Name: ${farmer.firstName} ${farmer.lastName}\nPhone: ${farmer.phoneNumber}\nKYC: ${farmer.kycStatus}\nPlots: ${farmer.plots?.length || 0}\nHerds: ${farmer.herds?.length || 0}`;
   },
 
   // ── Pay Pending Flow ───────────────────────────────────────────────────
@@ -435,7 +470,7 @@ const ussdService = {
         status: 'PENDING',
         premiumPaid: false,
       },
-      include: { plot: true },
+      include: { plot: true, herd: true },
       orderBy: { createdAt: 'desc' },
       take: 5,
     });
@@ -448,7 +483,7 @@ const ussdService = {
       id: p.id,
       policyNumber: p.policyNumber,
       premium: Number(p.premium),
-      plotName: p.plot?.name || 'N/A',
+      assetName: p.productType === 'LIVESTOCK' ? (p.herd?.name || 'Herd') : (p.plot?.name || 'N/A'),
     }));
 
     const list = pendingPolicies
@@ -458,6 +493,197 @@ const ussdService = {
     session.state = 'PAY_PENDING_CONFIRM';
     return `CON Select policy to pay:\n${list}`;
   },
+
+  // ── Buy Livestock Insurance Flow ──────────────────────────────────────
+
+  async _handleLivestockStart(session, input, organization, phoneNumber) {
+    const farmer = await prisma.farmer.findFirst({
+      where: { phoneNumber, organizationId: organization.id },
+      include: { herds: true },
+    });
+
+    if (!farmer) {
+      return 'END Please register first.';
+    }
+
+    if (farmer.kycStatus !== 'APPROVED') {
+      return `END Your KYC is ${farmer.kycStatus.toLowerCase()}. Contact your agent for approval.`;
+    }
+
+    const poolAddress = organization.livestockPoolAddress || organization.poolAddress;
+    if (!poolAddress || poolAddress === 'pending') {
+      return 'END Livestock insurance not yet available. Please try again later.';
+    }
+
+    if (!farmer.herds || farmer.herds.length === 0) {
+      return 'END No herds found. Contact your agent to register herds.';
+    }
+
+    session.data.farmerId = farmer.id;
+    session.data.farmerCounty = farmer.county;
+    session.data.herds = farmer.herds.map((h) => ({
+      id: h.id,
+      name: h.name,
+      livestockType: h.livestockType,
+      headCount: h.headCount,
+    }));
+
+    const herdList = farmer.herds.map((h, i) => `${i + 1}. ${h.name} (${h.headCount} ${h.livestockType.toLowerCase()})`).join('\n');
+    session.state = 'LIVESTOCK_SELECT_HERD';
+    return `CON Select herd:\n${herdList}`;
+  },
+
+  async _handleLivestockSelectHerd(session, input) {
+    const herdIndex = parseInt(input, 10) - 1;
+    const herds = session.data.herds || [];
+
+    if (herdIndex < 0 || herdIndex >= herds.length) {
+      return 'END Invalid selection.';
+    }
+
+    session.data.selectedHerd = herds[herdIndex];
+    session.state = 'LIVESTOCK_SELECT_PERIL';
+    return 'CON Select coverage:\n1. Drought/Pasture\n2. Disease Outbreak\n3. Heat Stress';
+  },
+
+  async _handleLivestockSelectPeril(session, input) {
+    const perilMap = { '1': 'DROUGHT_PASTURE', '2': 'DISEASE_OUTBREAK', '3': 'HEAT_STRESS' };
+    const perilNames = { '1': 'Drought/Pasture', '2': 'Disease Outbreak', '3': 'Heat Stress' };
+
+    if (!perilMap[input]) {
+      return 'END Invalid selection.';
+    }
+
+    session.data.livestockPeril = perilMap[input];
+    session.data.perilName = perilNames[input];
+    session.state = 'LIVESTOCK_SUM';
+    return 'CON Enter sum insured (KES):';
+  },
+
+  async _handleLivestockSum(session, input) {
+    const sumInsured = parseFloat(input);
+    if (isNaN(sumInsured) || sumInsured < MIN_SUM_INSURED || sumInsured > MAX_SUM_INSURED) {
+      return `END Invalid amount. Must be between ${MIN_SUM_INSURED.toLocaleString()} and ${MAX_SUM_INSURED.toLocaleString()} KES.`;
+    }
+
+    session.data.sumInsured = sumInsured;
+    session.state = 'LIVESTOCK_DURATION';
+    return 'CON Coverage duration (days, 30-365):';
+  },
+
+  async _handleLivestockDuration(session, input) {
+    const duration = parseInt(input, 10);
+    if (isNaN(duration) || duration < 30 || duration > 365) {
+      return 'END Invalid duration. Must be between 30 and 365 days.';
+    }
+
+    session.data.duration = duration;
+
+    const herd = session.data.selectedHerd;
+    const durationFactor = getDurationFactor(duration);
+    const livestockFactor = LIVESTOCK_FACTORS[herd.livestockType] || 1.0;
+    const perilFactor = LIVESTOCK_PERIL_FACTORS[session.data.livestockPeril] || 1.0;
+    const countyKey = session.data.farmerCounty?.toUpperCase().replace(/[\s-]/g, '_') || 'DEFAULT';
+    const regionFactor = LIVESTOCK_REGION_FACTORS[countyKey] || LIVESTOCK_REGION_FACTORS.DEFAULT;
+
+    const premium = Math.round(session.data.sumInsured * BASE_LIVESTOCK_RATE * livestockFactor * perilFactor * regionFactor * durationFactor);
+    const platformFee = Math.round((premium * PLATFORM_FEE_PERCENT) / 100);
+    const netPremium = premium - platformFee;
+
+    session.data.premium = premium;
+    session.data.platformFee = platformFee;
+    session.data.netPremium = netPremium;
+
+    session.state = 'LIVESTOCK_CONFIRM';
+    return `CON ${herd.name} - ${session.data.perilName}\nPremium: KES ${premium}\n1. Confirm\n2. Cancel`;
+  },
+
+  async _handleLivestockConfirm(session, input, organization, phoneNumber) {
+    if (input === '1') {
+      try {
+        const farmer = await prisma.farmer.findFirst({
+          where: { phoneNumber, organizationId: organization.id },
+        });
+
+        if (!farmer) {
+          return 'END Error: Farmer not found.';
+        }
+
+        const now = new Date();
+        const endDate = new Date(now);
+        endDate.setDate(endDate.getDate() + session.data.duration);
+
+        const policyNumber = generatePolicyNumber();
+        const poolAddress = organization.livestockPoolAddress || organization.poolAddress;
+
+        // Map peril to coverage type
+        const coverageMap = {
+          DROUGHT_PASTURE: 'LIVESTOCK_DROUGHT',
+          DISEASE_OUTBREAK: 'LIVESTOCK_DISEASE',
+          HEAT_STRESS: 'LIVESTOCK_COMPREHENSIVE',
+        };
+
+        const policy = await prisma.policy.create({
+          data: {
+            policyNumber,
+            organizationId: organization.id,
+            poolAddress,
+            farmerId: farmer.id,
+            herdId: session.data.selectedHerd.id,
+            productType: 'LIVESTOCK',
+            coverageType: coverageMap[session.data.livestockPeril] || 'LIVESTOCK_COMPREHENSIVE',
+            livestockPeril: session.data.livestockPeril,
+            sumInsured: session.data.sumInsured,
+            premium: session.data.premium,
+            platformFee: session.data.platformFee,
+            netPremium: session.data.netPremium,
+            startDate: now,
+            endDate,
+            durationDays: session.data.duration,
+            status: 'PENDING',
+          },
+        });
+
+        try {
+          await paymentService.initiatePremiumPayment(organization.id, {
+            reference: policy.id,
+            phoneNumber,
+            amount: session.data.premium,
+          });
+
+          addNotificationJob({
+            type: 'POLICY_CREATED',
+            phoneNumber,
+            message: `${organization.brandName}: Livestock policy ${policyNumber} created for ${session.data.selectedHerd.name} (${session.data.perilName}). Sum insured: KES ${session.data.sumInsured}. Check your phone for M-Pesa prompt of KES ${session.data.premium}.`,
+          }).catch((err) => logger.warn('Failed to queue livestock policy SMS', { error: err.message }));
+
+          return `END Policy ${policyNumber} created!\nCheck your phone for M-Pesa prompt.\nPremium: KES ${session.data.premium}`;
+        } catch (paymentError) {
+          logger.error('USSD livestock M-Pesa initiation failed', {
+            policyId: policy.id,
+            error: paymentError.message,
+          });
+
+          addNotificationJob({
+            type: 'POLICY_PAYMENT_FAILED',
+            phoneNumber,
+            message: `${organization.brandName}: Livestock policy ${policyNumber} created but payment could not start. Dial back and select "Pay Pending" to retry.`,
+          }).catch((err) => logger.warn('Failed to queue payment failure SMS', { error: err.message }));
+
+          return `END Policy ${policyNumber} created.\nPayment failed to start.\nDial back and select "Pay Pending" to retry.`;
+        }
+      } catch (error) {
+        logger.error('USSD livestock policy creation failed', { error: error.message });
+        return 'END Failed to create policy. Please try again.';
+      }
+    } else if (input === '2') {
+      return 'END Cancelled.';
+    }
+
+    return 'END Invalid selection.';
+  },
+
+  // ── Pay Pending Flow ───────────────────────────────────────────────────
 
   async _handlePayPendingConfirm(session, input, organization, phoneNumber) {
     const index = parseInt(input, 10) - 1;
