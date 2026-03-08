@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { TLU_FACTORS, IBLI_SEASONS } from './ibli.constants.js';
 
 export function normalizePhone(phone) {
   let cleaned = phone.replace(/\s+/g, '').replace(/-/g, '');
@@ -45,4 +46,47 @@ export function formatPaginatedResponse(data, total, page, limit) {
 
 export function formatResponse(data) {
   return { success: true, data };
+}
+
+// ============================================
+// IBLI Helpers
+// ============================================
+
+export function calculateTLU(livestockType, headCount) {
+  const factor = TLU_FACTORS[livestockType];
+  if (!factor) throw new Error(`Unknown livestock type: ${livestockType}`);
+  return parseFloat((headCount * factor).toFixed(2));
+}
+
+export function getCurrentSeason(date = new Date()) {
+  const month = date.getMonth() + 1; // 1-indexed
+  if (month >= 3 && month <= 9) return 'LRLD';
+  return 'SRSD';
+}
+
+export function getSeasonDates(season, year) {
+  const cfg = IBLI_SEASONS[season];
+  if (!cfg) throw new Error(`Unknown IBLI season: ${season}`);
+
+  if (season === 'SRSD') {
+    // Oct of year → Feb of year+1
+    const start = new Date(year, cfg.startMonth - 1, cfg.startDay);
+    const endYear = year + 1;
+    const endDay = (endYear % 4 === 0 && (endYear % 100 !== 0 || endYear % 400 === 0)) ? 29 : 28;
+    const end = new Date(endYear, cfg.endMonth - 1, endDay);
+    return { startDate: start, endDate: end };
+  }
+
+  // LRLD: Mar-Sep same year
+  const start = new Date(year, cfg.startMonth - 1, cfg.startDay);
+  const end = new Date(year, cfg.endMonth - 1, cfg.endDay);
+  return { startDate: start, endDate: end };
+}
+
+export function getSeasonYear(season, date = new Date()) {
+  const month = date.getMonth() + 1;
+  if (season === 'SRSD' && month <= 2) {
+    return date.getFullYear() - 1; // Jan-Feb belongs to previous year's SRSD
+  }
+  return date.getFullYear();
 }
