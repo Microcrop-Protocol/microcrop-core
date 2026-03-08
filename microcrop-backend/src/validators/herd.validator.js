@@ -8,8 +8,8 @@ export const createHerdSchema = Joi.object({
     .required(),
   headCount: Joi.number().integer().min(1).max(100000).required(),
   estimatedValue: Joi.number().positive().required(),
-  latitude: Joi.number().min(-90).max(90).required(),
-  longitude: Joi.number().min(-180).max(180).required(),
+  latitude: Joi.number().min(-90).max(90).optional().allow(null),
+  longitude: Joi.number().min(-180).max(180).optional().allow(null),
   weatherStationId: Joi.string().optional(),
 });
 
