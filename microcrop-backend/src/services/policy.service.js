@@ -2,7 +2,11 @@ import prisma from '../config/database.js';
 import { generatePolicyNumber, paginate } from '../utils/helpers.js';
 import {
   BASE_PREMIUM_RATE,
+  BASE_LIVESTOCK_RATE,
   CROP_FACTORS,
+  LIVESTOCK_FACTORS,
+  LIVESTOCK_PERIL_FACTORS,
+  LIVESTOCK_REGION_FACTORS,
   PLATFORM_FEE_PERCENT,
   getDurationFactor,
 } from '../utils/constants.js';
@@ -12,7 +16,7 @@ import logger from '../utils/logger.js';
 const policyService = {
   async calculateQuote(organizationId, data) {
     try {
-      const { farmerId, plotId, sumInsured, coverageType, durationDays } = data;
+      const { farmerId, plotId, herdId, sumInsured, coverageType, durationDays, productType, livestockPeril } = data;
 
       const farmer = await prisma.farmer.findFirst({
         where: { id: farmerId, organizationId },
@@ -20,6 +24,57 @@ const policyService = {
       if (!farmer) {
         throw new NotFoundError('Farmer not found in this organization');
       }
+
+      const durationFactor = getDurationFactor(durationDays);
+
+      // Livestock quote
+      if (productType === 'LIVESTOCK') {
+        if (!herdId) throw new ValidationError('herdId is required for livestock insurance');
+        if (!livestockPeril) throw new ValidationError('livestockPeril is required for livestock insurance');
+
+        const herd = await prisma.herd.findFirst({
+          where: { id: herdId, organizationId },
+        });
+        if (!herd) throw new NotFoundError('Herd not found in this organization');
+
+        const baseRate = BASE_LIVESTOCK_RATE;
+        const livestockFactor = LIVESTOCK_FACTORS[herd.livestockType] || 1.0;
+        const perilFactor = LIVESTOCK_PERIL_FACTORS[livestockPeril] || 1.0;
+        const countyKey = farmer.county?.toUpperCase().replace(/[\s-]/g, '_') || 'DEFAULT';
+        const regionFactor = LIVESTOCK_REGION_FACTORS[countyKey] || LIVESTOCK_REGION_FACTORS.DEFAULT;
+
+        const premium = parseFloat(
+          (sumInsured * baseRate * livestockFactor * perilFactor * regionFactor * durationFactor).toFixed(2)
+        );
+        const platformFee = parseFloat(
+          ((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2)
+        );
+        const netPremium = parseFloat((premium - platformFee).toFixed(2));
+
+        return {
+          productType: 'LIVESTOCK',
+          sumInsured,
+          premium,
+          platformFee,
+          netPremium,
+          coverageType,
+          livestockPeril,
+          durationDays,
+          breakdown: {
+            baseRate,
+            livestockFactor,
+            perilFactor,
+            regionFactor,
+            durationFactor,
+            livestockType: herd.livestockType,
+            headCount: herd.headCount,
+            calculation: `${sumInsured} * ${baseRate} * ${livestockFactor} * ${perilFactor} * ${regionFactor} * ${durationFactor} = ${premium}`,
+          },
+        };
+      }
+
+      // Crop quote (existing logic)
+      if (!plotId) throw new ValidationError('plotId is required for crop insurance');
 
       const plot = await prisma.plot.findFirst({
         where: { id: plotId, organizationId },
@@ -31,7 +86,6 @@ const policyService = {
       const cropType = plot.cropType;
       const baseRate = BASE_PREMIUM_RATE;
       const cropFactor = CROP_FACTORS[cropType] || 1.0;
-      const durationFactor = getDurationFactor(durationDays);
 
       const premium = parseFloat(
         (sumInsured * baseRate * cropFactor * durationFactor).toFixed(2)
@@ -42,6 +96,7 @@ const policyService = {
       const netPremium = parseFloat((premium - platformFee).toFixed(2));
 
       return {
+        productType: 'CROP',
         sumInsured,
         premium,
         platformFee,
@@ -63,7 +118,7 @@ const policyService = {
 
   async purchase(organizationId, data) {
     try {
-      const { farmerId, plotId, sumInsured, coverageType, durationDays } = data;
+      const { farmerId, plotId, herdId, sumInsured, coverageType, durationDays, productType, livestockPeril } = data;
 
       const policy = await prisma.$transaction(async (tx) => {
         const farmer = await tx.farmer.findFirst({
@@ -76,31 +131,55 @@ const policyService = {
           throw new ValidationError('Farmer KYC must be approved before purchasing a policy');
         }
 
-        const plot = await tx.plot.findFirst({
-          where: { id: plotId, farmerId, organizationId },
-        });
-        if (!plot) {
-          throw new NotFoundError('Plot not found for this farmer in this organization');
+        const durationFactor = getDurationFactor(durationDays);
+        let premium, platformFee, netPremium;
+        let resolvedPlotId = null;
+        let resolvedHerdId = null;
+
+        if (productType === 'LIVESTOCK') {
+          if (!herdId) throw new ValidationError('herdId is required for livestock insurance');
+          if (!livestockPeril) throw new ValidationError('livestockPeril is required for livestock insurance');
+
+          const herd = await tx.herd.findFirst({
+            where: { id: herdId, farmerId, organizationId },
+          });
+          if (!herd) throw new NotFoundError('Herd not found for this farmer in this organization');
+
+          resolvedHerdId = herdId;
+
+          const livestockFactor = LIVESTOCK_FACTORS[herd.livestockType] || 1.0;
+          const perilFactor = LIVESTOCK_PERIL_FACTORS[livestockPeril] || 1.0;
+          const countyKey = farmer.county?.toUpperCase().replace(/[\s-]/g, '_') || 'DEFAULT';
+          const regionFactor = LIVESTOCK_REGION_FACTORS[countyKey] || LIVESTOCK_REGION_FACTORS.DEFAULT;
+
+          premium = parseFloat(
+            (sumInsured * BASE_LIVESTOCK_RATE * livestockFactor * perilFactor * regionFactor * durationFactor).toFixed(2)
+          );
+        } else {
+          if (!plotId) throw new ValidationError('plotId is required for crop insurance');
+
+          const plot = await tx.plot.findFirst({
+            where: { id: plotId, farmerId, organizationId },
+          });
+          if (!plot) throw new NotFoundError('Plot not found for this farmer in this organization');
+
+          resolvedPlotId = plotId;
+
+          const cropFactor = CROP_FACTORS[plot.cropType] || 1.0;
+          premium = parseFloat(
+            (sumInsured * BASE_PREMIUM_RATE * cropFactor * durationFactor).toFixed(2)
+          );
         }
 
-        const cropType = plot.cropType;
-        const baseRate = BASE_PREMIUM_RATE;
-        const cropFactor = CROP_FACTORS[cropType] || 1.0;
-        const durationFactor = getDurationFactor(durationDays);
-
-        const premium = parseFloat(
-          (sumInsured * baseRate * cropFactor * durationFactor).toFixed(2)
-        );
-        const platformFee = parseFloat(
-          ((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2)
-        );
-        const netPremium = parseFloat((premium - platformFee).toFixed(2));
+        platformFee = parseFloat(((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2));
+        netPremium = parseFloat((premium - platformFee).toFixed(2));
 
         const policyNumber = generatePolicyNumber();
+        const org = await tx.organization.findUnique({ where: { id: organizationId } });
 
-        const org = await tx.organization.findUnique({
-          where: { id: organizationId },
-        });
+        const poolAddress = productType === 'LIVESTOCK'
+          ? (org.livestockPoolAddress || org.poolAddress || 'pending')
+          : (org.poolAddress || 'pending');
 
         const now = new Date();
         const endDate = new Date(now);
@@ -110,10 +189,13 @@ const policyService = {
           data: {
             policyNumber,
             organizationId,
-            poolAddress: org.poolAddress || 'pending',
+            poolAddress,
             farmerId,
-            plotId,
+            plotId: resolvedPlotId,
+            herdId: resolvedHerdId,
+            productType: productType || 'CROP',
             coverageType,
+            livestockPeril: productType === 'LIVESTOCK' ? livestockPeril : null,
             sumInsured,
             premium,
             platformFee,
@@ -157,6 +239,12 @@ const policyService = {
       if (filters.plotId) {
         where.plotId = filters.plotId;
       }
+      if (filters.herdId) {
+        where.herdId = filters.herdId;
+      }
+      if (filters.productType) {
+        where.productType = filters.productType;
+      }
 
       const [policies, total] = await Promise.all([
         prisma.policy.findMany({
@@ -173,6 +261,13 @@ const policyService = {
             plot: {
               select: {
                 name: true,
+              },
+            },
+            herd: {
+              select: {
+                name: true,
+                livestockType: true,
+                headCount: true,
               },
             },
           },
@@ -195,6 +290,7 @@ const policyService = {
         include: {
           farmer: true,
           plot: true,
+          herd: true,
           payouts: true,
           damageAssessments: true,
         },
@@ -218,6 +314,7 @@ const policyService = {
         include: {
           farmer: true,
           plot: true,
+          herd: true,
           payouts: true,
           damageAssessments: true,
         },
