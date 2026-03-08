@@ -13,6 +13,9 @@ const dashboardOrgService = {
       const [
         totalFarmers,
         activePolicies,
+        activeCropPolicies,
+        activeLivestockPolicies,
+        totalHerds,
         periodNewPolicies,
         premiumAgg,
         payoutAgg,
@@ -20,6 +23,9 @@ const dashboardOrgService = {
       ] = await Promise.all([
         prisma.farmer.count({ where: { organizationId } }),
         prisma.policy.count({ where: { organizationId, status: 'ACTIVE' } }),
+        prisma.policy.count({ where: { organizationId, status: 'ACTIVE', productType: 'CROP' } }),
+        prisma.policy.count({ where: { organizationId, status: 'ACTIVE', productType: 'LIVESTOCK' } }),
+        prisma.herd.count({ where: { organizationId } }),
         prisma.policy.count({
           where: { organizationId, createdAt: { gte: dateFilter.gte, lte: dateFilter.lte } },
         }),
@@ -36,6 +42,7 @@ const dashboardOrgService = {
           where: { id: organizationId },
           select: {
             poolAddress: true,
+            livestockPoolAddress: true,
             totalPremiumsCollected: true,
             totalPayoutsProcessed: true,
             totalFeesGenerated: true,
@@ -45,13 +52,20 @@ const dashboardOrgService = {
 
       return {
         farmers: { total: totalFarmers },
-        policies: { active: activePolicies, periodNew: periodNewPolicies },
+        herds: { total: totalHerds },
+        policies: {
+          active: activePolicies,
+          activeCrop: activeCropPolicies,
+          activeLivestock: activeLivestockPolicies,
+          periodNew: periodNewPolicies,
+        },
         financials: {
           premiumsCollected: premiumAgg._sum.premium || 0,
           payoutsProcessed: payoutAgg._sum.amountUSDC || 0,
           payoutCount: payoutAgg._count || 0,
           feesPaid: premiumAgg._sum.platformFee || 0,
           poolAddress: org?.poolAddress || null,
+          livestockPoolAddress: org?.livestockPoolAddress || null,
         },
         period: { gte: dateFilter.gte, lte: dateFilter.lte },
       };
@@ -146,7 +160,7 @@ const dashboardOrgService = {
     try {
       const dateFilter = buildDateFilter(query);
 
-      const [byStatusRaw, byCoverageRaw] = await Promise.all([
+      const [byStatusRaw, byCoverageRaw, byProductTypeRaw] = await Promise.all([
         prisma.policy.groupBy({
           by: ['status'],
           where: { organizationId },
@@ -156,6 +170,12 @@ const dashboardOrgService = {
           by: ['coverageType'],
           where: { organizationId },
           _count: { _all: true },
+        }),
+        prisma.policy.groupBy({
+          by: ['productType'],
+          where: { organizationId },
+          _count: { _all: true },
+          _sum: { premium: true },
         }),
       ]);
 
@@ -202,8 +222,13 @@ const dashboardOrgService = {
 
       const byStatus = groupByToMap(byStatusRaw, 'status');
       const byCoverage = groupByToMap(byCoverageRaw, 'coverageType');
+      const byProductType = byProductTypeRaw.map((row) => ({
+        productType: row.productType,
+        count: row._count._all,
+        totalPremium: row._sum.premium || 0,
+      }));
 
-      return { byStatus, byCoverage, byCropType, expiringSoon, recentlyActivated };
+      return { byStatus, byCoverage, byProductType, byCropType, expiringSoon, recentlyActivated };
     } catch (error) {
       logger.error('Failed to get org policies', { organizationId, error: error.message });
       throw error;
@@ -545,6 +570,52 @@ const dashboardOrgService = {
       };
     } catch (error) {
       logger.error('Failed to get org plots', { organizationId, error: error.message });
+      throw error;
+    }
+  },
+
+  async getHerds(organizationId, query) {
+    try {
+      const { page, limit, livestockType } = query;
+      const { skip, take, page: p, limit: l } = paginate(page, limit);
+
+      const where = { organizationId };
+      if (livestockType) {
+        where.livestockType = livestockType;
+      }
+
+      const [herds, total, livestockDistributionRaw] = await Promise.all([
+        prisma.herd.findMany({
+          where,
+          skip,
+          take,
+          include: {
+            farmer: { select: { firstName: true, lastName: true, county: true } },
+            _count: { select: { policies: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.herd.count({ where }),
+        prisma.herd.groupBy({
+          by: ['livestockType'],
+          where: { organizationId },
+          _count: { _all: true },
+          _sum: { headCount: true },
+        }),
+      ]);
+
+      const livestockDistribution = livestockDistributionRaw.map((row) => ({
+        livestockType: row.livestockType,
+        herdCount: row._count._all,
+        totalHeadCount: row._sum.headCount || 0,
+      }));
+
+      return {
+        herds: { data: herds, total, page: p, limit: l },
+        livestockDistribution,
+      };
+    } catch (error) {
+      logger.error('Failed to get org herds', { organizationId, error: error.message });
       throw error;
     }
   },
