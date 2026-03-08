@@ -272,11 +272,18 @@ model Herd {
   headCount      Int
   estimatedValue Decimal       @db.Decimal(12, 2) // per head, in KES
 
-  // Location (grazing area for weather/NDVI)
-  latitude  Decimal @db.Decimal(10, 8)
-  longitude Decimal @db.Decimal(11, 8)
+  // TLU (Tropical Livestock Unit) — denormalized, recomputed on update
+  tluCount Decimal @db.Decimal(10, 2) @default(0)
 
-  // Weather station assignment
+  // IBLI: Insurance unit (county-level coverage)
+  insuranceUnitId String?
+  insuranceUnit   InsuranceUnit? @relation(fields: [insuranceUnitId], references: [id], onDelete: SetNull)
+
+  // Location (optional — pastoralists move)
+  latitude  Decimal? @db.Decimal(10, 8)
+  longitude Decimal? @db.Decimal(11, 8)
+
+  // Weather station assignment (legacy)
   weatherStationId String?
 
   // Relations
@@ -289,6 +296,7 @@ model Herd {
   @@index([farmerId])
   @@index([livestockType])
   @@index([organizationId, farmerId])
+  @@index([insuranceUnitId])
 }
 
 enum LivestockType {
@@ -308,6 +316,120 @@ enum LivestockPeril {
 enum InsuranceProduct {
   CROP
   LIVESTOCK
+}
+
+enum IBLISeason {
+  LRLD // Long Rains Long Dry (Mar-Sep)
+  SRSD // Short Rains Short Dry (Oct-Feb)
+}
+
+enum ForageAlertStatus {
+  TRIGGERED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// INSURANCE UNIT (County-level IBLI coverage)
+// ============================================
+
+model InsuranceUnit {
+  id String @id @default(uuid())
+
+  // Geography
+  county    String
+  subCounty String?
+  unitCode  String  @unique // e.g. "TURKANA", "MARSABIT"
+
+  // NDVI baselines per season
+  ndviBaselineLRLD Decimal @db.Decimal(4, 3)
+  ndviBaselineSRSD Decimal @db.Decimal(4, 3)
+
+  // Strike levels per season (trigger thresholds)
+  strikeLevelLRLD Decimal @db.Decimal(4, 3)
+  strikeLevelSRSD Decimal @db.Decimal(4, 3)
+
+  // Actuarial premium rates (KES per TLU per season)
+  premiumRateLRLD Decimal @db.Decimal(10, 2)
+  premiumRateSRSD Decimal @db.Decimal(10, 2)
+
+  // Standard value per TLU (KES)
+  valuePerTLU Decimal @default(15000) @db.Decimal(10, 2)
+
+  // Year-specific season date overrides
+  seasonalConfig Json?
+
+  isActive Boolean @default(true)
+
+  // Relations
+  herds         Herd[]
+  policies      Policy[]
+  ndviReadings  InsuranceUnitNDVI[]
+  forageAlerts  ForageAlert[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([county])
+  @@index([isActive])
+}
+
+// ============================================
+// NDVI TIME-SERIES (Per insurance unit)
+// ============================================
+
+model InsuranceUnitNDVI {
+  id String @id @default(uuid())
+
+  insuranceUnitId String
+  insuranceUnit   InsuranceUnit @relation(fields: [insuranceUnitId], references: [id], onDelete: Cascade)
+
+  season IBLISeason
+  year   Int
+
+  captureDate    DateTime
+  ndviValue      Decimal @db.Decimal(4, 3)
+  cumulativeNDVI Decimal @db.Decimal(6, 3)
+
+  source String @default("MODIS") // MODIS, VIIRS, Sentinel-2
+
+  createdAt DateTime @default(now())
+
+  @@index([insuranceUnitId, season, year])
+  @@index([captureDate])
+  @@unique([insuranceUnitId, season, year, captureDate])
+}
+
+// ============================================
+// FORAGE ALERT (NDVI trigger → mass payout)
+// ============================================
+
+model ForageAlert {
+  id String @id @default(uuid())
+
+  insuranceUnitId String
+  insuranceUnit   InsuranceUnit @relation(fields: [insuranceUnitId], references: [id], onDelete: Cascade)
+
+  season IBLISeason
+  year   Int
+
+  // Trigger data
+  cumulativeNDVI Decimal          @db.Decimal(6, 3)
+  strikeLevel    Decimal          @db.Decimal(4, 3)
+  deficitPercent Decimal          @db.Decimal(5, 2)
+  status         ForageAlertStatus @default(TRIGGERED)
+
+  // Outcome
+  policiesAffected Int      @default(0)
+  totalPayoutUSDC  Decimal  @default(0) @db.Decimal(15, 2)
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([insuranceUnitId, season, year])
+  @@index([status])
+  @@index([createdAt])
 }
 
 // ============================================
@@ -337,6 +459,11 @@ model Policy {
   plot     Plot?  @relation(fields: [plotId], references: [id], onDelete: Restrict)
   herdId   String?
   herd     Herd?  @relation(fields: [herdId], references: [id], onDelete: Restrict)
+
+  // IBLI fields (livestock seasonal coverage)
+  season          IBLISeason?
+  insuranceUnitId String?
+  insuranceUnit   InsuranceUnit? @relation(fields: [insuranceUnitId], references: [id], onDelete: SetNull)
 
   // Coverage details
   coverageType   CoverageType
@@ -384,6 +511,7 @@ model Policy {
   @@index([poolAddress])
   @@index([productType])
   @@index([herdId])
+  @@index([insuranceUnitId, season])
 }
 
 enum CoverageType {
