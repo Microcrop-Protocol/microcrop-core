@@ -106,3 +106,5 @@ export const PAYOUT_QUEUE_NAME = 'payout-processing';
 export const NOTIFICATION_QUEUE_NAME = 'notifications';
 
 export const BLOCKCHAIN_RETRY_QUEUE_NAME = 'blockchain-retry';
+
+export const FORAGE_TRIGGER_QUEUE_NAME = 'forage-trigger';
