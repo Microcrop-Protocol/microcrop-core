@@ -21,5 +21,6 @@ router.get('/financials', validate(granularitySchema, 'query'), dashboardOrgCont
 router.get('/plots', validate(paginatedDateRangeSchema, 'query'), dashboardOrgController.getPlots);
 router.get('/herds', validate(paginatedDateRangeSchema, 'query'), dashboardOrgController.getHerds);
 router.get('/activity', validate(activitySchema, 'query'), dashboardOrgController.getActivity);
+router.get('/forage-alerts', validate(paginatedDateRangeSchema, 'query'), dashboardOrgController.getForageAlerts);
 
 export const dashboardOrgRouter = router;
