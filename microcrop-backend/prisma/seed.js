@@ -75,10 +75,10 @@ async function main() {
   // Create Platform Admin
   const platformAdmin = await prisma.user.create({
     data: {
-      email: 'admin@microcrop.com',
+      email: 'timbwamoses83@gmail.com',
       password: hashedPassword,
-      firstName: 'Platform',
-      lastName: 'Admin',
+      firstName: 'Moses',
+      lastName: 'Timbwa',
       role: 'PLATFORM_ADMIN',
       isActive: true,
       emailVerified: true,
