@@ -20,8 +20,12 @@ const smsService = {
       params.append('to', phoneNumber);
       params.append('message', message);
 
+      const baseUrl = env.atUsername === 'sandbox'
+        ? 'https://api.sandbox.africastalking.com'
+        : 'https://api.africastalking.com';
+
       await axios.post(
-        'https://api.africastalking.com/version1/messaging',
+        `${baseUrl}/version1/messaging`,
         params.toString(),
         {
           timeout: 10000,
