@@ -63,7 +63,25 @@ const organizationService = {
         throw new ValidationError('targetCapital is required');
       }
 
-      const poolOwner = org.adminWallet || poolConfig.poolOwner;
+      // Create Privy wallet early so it can serve as poolOwner if needed
+      let orgWallet = null;
+      if (!org.privyWalletId) {
+        try {
+          orgWallet = await createOrgWallet();
+          logger.info('Created Privy wallet for organization', {
+            orgId,
+            walletId: orgWallet.walletId,
+            address: orgWallet.address,
+          });
+        } catch (walletError) {
+          logger.error('Failed to create org wallet', {
+            orgId,
+            error: walletError.message,
+          });
+        }
+      }
+
+      const poolOwner = org.adminWallet || poolConfig.poolOwner || orgWallet?.address || org.walletAddress;
       if (!poolOwner) {
         throw new ValidationError('Organization admin wallet or poolOwner is required');
       }
@@ -109,31 +127,21 @@ const organizationService = {
         });
       }
 
-      // Create Privy wallet for this organization
-      let orgWallet = null;
-      try {
-        orgWallet = await createOrgWallet();
-        logger.info('Created Privy wallet for organization', {
-          orgId,
-          walletId: orgWallet.walletId,
-          address: orgWallet.address,
-        });
-
-        // Whitelist org wallet on private pool
-        if (poolType !== 'PUBLIC') {
+      // Whitelist org wallet on private pool
+      if (orgWallet && poolType !== 'PUBLIC') {
+        try {
           await poolWriter.addDepositor(result.poolAddress, orgWallet.address);
           logger.info('Org wallet whitelisted on pool', {
             orgId,
             poolAddress: result.poolAddress,
             walletAddress: orgWallet.address,
           });
+        } catch (whitelistError) {
+          logger.error('Failed to whitelist org wallet on pool', {
+            orgId,
+            error: whitelistError.message,
+          });
         }
-      } catch (walletError) {
-        // Pool deployed successfully but wallet creation failed — log and continue
-        logger.error('Failed to create org wallet (pool still deployed)', {
-          orgId,
-          error: walletError.message,
-        });
       }
 
       // Update organization with pool address and wallet
