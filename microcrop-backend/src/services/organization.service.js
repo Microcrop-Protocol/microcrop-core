@@ -86,6 +86,16 @@ const organizationService = {
         throw new ValidationError('Organization admin wallet or poolOwner is required');
       }
 
+      // Register poolOwner on-chain if not already registered
+      const { riskPoolFactory } = await import('../config/blockchain.js');
+      const isRegistered = await riskPoolFactory.isOrganization(poolOwner);
+      if (!isRegistered) {
+        logger.info('Registering organization on-chain', { orgId, poolOwner });
+        const regTx = await riskPoolFactory.registerOrganization(poolOwner);
+        await regTx.wait(1, 120000);
+        logger.info('Organization registered on-chain', { orgId, poolOwner });
+      }
+
       let result;
 
       // Deploy based on pool type
