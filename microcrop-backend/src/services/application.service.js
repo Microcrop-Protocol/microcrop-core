@@ -237,7 +237,7 @@ export const applicationService = {
           apiSecret,
           kybStatus: 'VERIFIED',
           onboardingStep: 'POOL_DEPLOYMENT',
-          isActive: false, // Activate after pool deployment and admin setup
+          isActive: true,
         },
       });
 
