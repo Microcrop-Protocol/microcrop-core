@@ -1,6 +1,8 @@
 import prisma from '../config/database.js';
 import { AppError } from '../utils/errors.js';
 import crypto from 'crypto';
+import { createOrgWallet } from '../blockchain/wallet-manager.js';
+import logger from '../utils/logger.js';
 
 export const applicationService = {
   /**
@@ -254,6 +256,29 @@ export const applicationService = {
 
       return { organization, application: updatedApplication };
     });
+
+    // Create Privy wallet for the new organization
+    try {
+      const orgWallet = await createOrgWallet();
+      await prisma.organization.update({
+        where: { id: result.organization.id },
+        data: {
+          privyWalletId: orgWallet.walletId,
+          walletAddress: orgWallet.address,
+        },
+      });
+      result.organization.privyWalletId = orgWallet.walletId;
+      result.organization.walletAddress = orgWallet.address;
+      logger.info('Created Privy wallet on org approval', {
+        orgId: result.organization.id,
+        walletAddress: orgWallet.address,
+      });
+    } catch (walletError) {
+      logger.error('Failed to create Privy wallet on org approval', {
+        orgId: result.organization.id,
+        error: walletError.message,
+      });
+    }
 
     return result;
   },
