@@ -108,3 +108,7 @@ export const NOTIFICATION_QUEUE_NAME = 'notifications';
 export const BLOCKCHAIN_RETRY_QUEUE_NAME = 'blockchain-retry';
 
 export const FORAGE_TRIGGER_QUEUE_NAME = 'forage-trigger';
+
+export const LIVESTOCK_CRE_QUEUE_NAME = 'livestock-cre-fallback';
+
+export const CROP_CRE_QUEUE_NAME = 'crop-cre-fallback';
