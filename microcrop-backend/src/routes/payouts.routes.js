@@ -1,10 +1,12 @@
 import { Router } from 'express';
+import Joi from 'joi';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { loadOrganization } from '../middleware/organization.middleware.js';
 import { authorize } from '../middleware/authorize.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { batchRetrySchema } from '../validators/staff.validator.js';
 import { payoutsController } from '../controllers/payouts.controller.js';
+import manualAssessmentService from '../services/manual-assessment.service.js';
 import prisma from '../config/database.js';
 import { formatResponse, formatPaginatedResponse, paginate } from '../utils/helpers.js';
 
@@ -80,5 +82,58 @@ router.get('/:payoutId', async (req, res, next) => {
 });
 
 router.post('/:payoutId/retry', authorize('ORG_ADMIN'), payoutsController.retry);
+
+// ============================================
+// MANUAL DAMAGE ASSESSMENT
+// ============================================
+const manualAssessmentSchema = Joi.object({
+  policyId: Joi.string().uuid().required(),
+  damagePercent: Joi.number().min(1).max(100).required(),
+  reason: Joi.string().max(500).optional(),
+});
+
+const bulkAssessmentSchema = Joi.object({
+  policyIds: Joi.array().items(Joi.string().uuid()).min(1).max(50).required(),
+  damagePercent: Joi.number().min(1).max(100).required(),
+  reason: Joi.string().max(500).optional(),
+});
+
+router.post(
+  '/manual-assessment',
+  authorize('ORG_ADMIN'),
+  validate(manualAssessmentSchema),
+  async (req, res, next) => {
+    try {
+      const result = await manualAssessmentService.createAssessment({
+        policyId: req.body.policyId,
+        organizationId: req.organization.id,
+        damagePercent: req.body.damagePercent,
+        reason: req.body.reason,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+router.post(
+  '/manual-assessment/bulk',
+  authorize('ORG_ADMIN'),
+  validate(bulkAssessmentSchema),
+  async (req, res, next) => {
+    try {
+      const result = await manualAssessmentService.createBulkAssessment({
+        policyIds: req.body.policyIds,
+        organizationId: req.organization.id,
+        damagePercent: req.body.damagePercent,
+        reason: req.body.reason,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 export const payoutsRouter = router;
