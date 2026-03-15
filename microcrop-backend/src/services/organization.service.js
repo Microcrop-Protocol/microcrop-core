@@ -1,10 +1,12 @@
 import prisma from '../config/database.js';
 import bcrypt from 'bcrypt';
 import { generateApiKey, generateApiSecret, paginate } from '../utils/helpers.js';
-import { NotFoundError, ConflictError, ValidationError } from '../utils/errors.js';
+import { NotFoundError, ConflictError, ValidationError, BlockchainError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
 import * as poolWriter from '../blockchain/writers/pool.writer.js';
 import * as poolReader from '../blockchain/readers/pool.reader.js';
+import { riskPoolFactory } from '../config/blockchain.js';
+import nonceManager from '../blockchain/nonce-manager.js';
 import { createOrgWallet, getWalletBalances } from '../blockchain/wallet-manager.js';
 
 const organizationService = {
@@ -87,13 +89,17 @@ const organizationService = {
       }
 
       // Register poolOwner on-chain if not already registered
-      const { riskPoolFactory } = await import('../config/blockchain.js');
+      if (!riskPoolFactory) {
+        throw new BlockchainError('RiskPoolFactory contract not configured');
+      }
       const isRegistered = await riskPoolFactory.isOrganization(poolOwner);
       if (!isRegistered) {
-        logger.info('Registering organization on-chain', { orgId, poolOwner });
-        const regTx = await riskPoolFactory.registerOrganization(poolOwner);
-        await regTx.wait(1, 120000);
-        logger.info('Organization registered on-chain', { orgId, poolOwner });
+        await nonceManager.serialize(async () => {
+          logger.info('Registering organization on-chain', { orgId, poolOwner });
+          const regTx = await riskPoolFactory.registerOrganization(poolOwner);
+          await regTx.wait(1, 120000);
+          logger.info('Organization registered on-chain', { orgId, poolOwner });
+        });
       }
 
       let result;
@@ -138,13 +144,14 @@ const organizationService = {
       }
 
       // Whitelist org wallet on private pool
-      if (orgWallet && poolType !== 'PUBLIC') {
+      const walletToWhitelist = orgWallet?.address || org.walletAddress;
+      if (walletToWhitelist && poolType !== 'PUBLIC') {
         try {
-          await poolWriter.addDepositor(result.poolAddress, orgWallet.address);
+          await poolWriter.addDepositor(result.poolAddress, walletToWhitelist);
           logger.info('Org wallet whitelisted on pool', {
             orgId,
             poolAddress: result.poolAddress,
-            walletAddress: orgWallet.address,
+            walletAddress: walletToWhitelist,
           });
         } catch (whitelistError) {
           logger.error('Failed to whitelist org wallet on pool', {
