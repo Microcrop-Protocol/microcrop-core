@@ -96,9 +96,17 @@ export const env = {
 
   // Optional APIs
   weatherxmApiKey: optional('WEATHERXM_API_KEY', ''),
-  weatherxmApiUrl: optional('WEATHERXM_API_URL', 'https://api.weatherxm.com/v1'),
+  weatherxmApiUrl: optional('WEATHERXM_API_URL', 'https://pro.weatherxm.com/api/v1'),
   planetApiKey: optional('PLANET_API_KEY', ''),
   planetApiUrl: optional('PLANET_API_URL', 'https://api.planet.com/data/v1'),
+
+  // Sentinel Hub (for backend CRE fallback)
+  sentinelHubClientId: optional('SENTINEL_HUB_CLIENT_ID', ''),
+  sentinelHubClientSecret: optional('SENTINEL_HUB_CLIENT_SECRET', ''),
+  sentinelHubApiUrl: optional('SENTINEL_HUB_API_URL', 'https://services.sentinel-hub.com/api/v1'),
+
+  // Backend CRE fallback toggle
+  creFallbackEnabled: optional('CRE_FALLBACK_ENABLED', 'false') === 'true',
 };
 
 export default env;
