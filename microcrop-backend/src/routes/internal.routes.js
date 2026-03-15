@@ -7,6 +7,8 @@ import { invitationController } from '../controllers/invitation.controller.js';
 import { checkPendingPayouts } from '../workers/payout.worker.js';
 import forageTriggerService from '../services/forage-trigger.service.js';
 import { addForageTriggerJob } from '../workers/forage-trigger.worker.js';
+import { triggerLivestockCRE } from '../workers/livestock-cre.worker.js';
+import { triggerCropCRE } from '../workers/crop-cre.worker.js';
 
 const router = Router();
 
@@ -245,6 +247,36 @@ router.get('/insurance-units', async (_req, res, next) => {
     });
 
     res.json({ success: true, units });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/internal/cre/livestock
+ *
+ * Manually trigger the livestock CRE fallback worker.
+ */
+router.post('/cre/livestock', async (_req, res, next) => {
+  try {
+    const job = await triggerLivestockCRE();
+    logger.info('Internal API: livestock CRE fallback triggered');
+    res.json({ success: true, data: { jobId: job.id } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/internal/cre/crop
+ *
+ * Manually trigger the crop CRE fallback worker.
+ */
+router.post('/cre/crop', async (_req, res, next) => {
+  try {
+    const job = await triggerCropCRE();
+    logger.info('Internal API: crop CRE fallback triggered');
+    res.json({ success: true, data: { jobId: job.id } });
   } catch (error) {
     next(error);
   }
