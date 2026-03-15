@@ -263,6 +263,12 @@ router.post('/cre/livestock', async (_req, res, next) => {
     logger.info('Internal API: livestock CRE fallback triggered');
     res.json({ success: true, data: { jobId: job.id } });
   } catch (error) {
+    if (error.message?.includes('not initialized')) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'CRE_DISABLED', message: 'Livestock CRE fallback is not enabled. Set CRE_FALLBACK_ENABLED=true' },
+      });
+    }
     next(error);
   }
 });
@@ -278,6 +284,12 @@ router.post('/cre/crop', async (_req, res, next) => {
     logger.info('Internal API: crop CRE fallback triggered');
     res.json({ success: true, data: { jobId: job.id } });
   } catch (error) {
+    if (error.message?.includes('not initialized')) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'CRE_DISABLED', message: 'Crop CRE fallback is not enabled. Set CRE_FALLBACK_ENABLED=true' },
+      });
+    }
     next(error);
   }
 });

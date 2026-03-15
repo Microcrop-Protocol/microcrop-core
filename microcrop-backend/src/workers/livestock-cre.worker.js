@@ -150,7 +150,7 @@ export function startLivestockCREWorker() {
   livestockCREQueue.add({}, {
     repeat: { cron: '0 6 1,17 * *' },
     jobId: 'livestock-cre-scheduled',
-  });
+  }).catch((err) => logger.error('Failed to schedule livestock CRE cron', { error: err.message }));
 
   logger.info('Livestock CRE fallback worker started (schedule: 1st & 17th at 06:00 UTC)');
   return livestockCREQueue;

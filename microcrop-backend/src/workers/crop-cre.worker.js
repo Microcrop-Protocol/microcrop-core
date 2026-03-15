@@ -157,6 +157,11 @@ export function startCropCREWorker() {
         continue;
       }
 
+      if (!policy.farmer?.phoneNumber) {
+        logger.warn('Policy has no farmer phone number, skipping', { policyId: policy.id });
+        continue;
+      }
+
       const lat = parseFloat(policy.plot.latitude);
       const lon = parseFloat(policy.plot.longitude);
 
@@ -178,6 +183,12 @@ export function startCropCREWorker() {
 
         // Fetch satellite NDVI
         const ndviValue = await fetchPlotNDVI(lat, lon, 7);
+
+        if (ndviValue < 0) {
+          logger.warn('No valid NDVI data for plot, skipping', { policyId: policy.id, lat, lon });
+          continue;
+        }
+
         const satelliteDamage = calculateSatelliteDamage(ndviValue);
 
         // Fetch weather data (optional — falls back to satellite-only)
@@ -287,7 +298,7 @@ export function startCropCREWorker() {
   cropCREQueue.add({}, {
     repeat: { cron: '0 0 * * *' },
     jobId: 'crop-cre-scheduled',
-  });
+  }).catch((err) => logger.error('Failed to schedule crop CRE cron', { error: err.message }));
 
   logger.info('Crop CRE fallback worker started (schedule: daily at 00:00 UTC)');
   return cropCREQueue;

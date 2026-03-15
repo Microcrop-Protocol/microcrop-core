@@ -22,6 +22,10 @@ const manualAssessmentService = {
       throw new Error('Active, paid policy not found in your organization');
     }
 
+    if (!policy.farmer?.phoneNumber) {
+      throw new Error('Policy farmer has no phone number — cannot process M-Pesa payout');
+    }
+
     // Check for duplicate recent assessment
     const recentAssessment = await prisma.damageAssessment.findFirst({
       where: {
@@ -35,12 +39,14 @@ const manualAssessmentService = {
       throw new Error('A manual assessment was already created for this policy in the last 24 hours');
     }
 
+    const damagePercentInt = Math.round(damagePercent);
+
     // Create damage assessment
     const assessment = await prisma.damageAssessment.create({
       data: {
         policyId,
         organizationId,
-        damagePercent,
+        damagePercent: damagePercentInt,
         combinedDamage: damagePercent,
         source: 'MANUAL',
         triggered: true,

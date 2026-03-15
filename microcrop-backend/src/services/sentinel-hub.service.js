@@ -136,7 +136,7 @@ export async function fetchAreaNDVI(bbox, lookbackDays = 16) {
  * @param {number} lat
  * @param {number} lon
  * @param {number} lookbackDays - typically 7
- * @returns {Promise<number>} mean NDVI value, or 0.5 as fallback
+ * @returns {Promise<number>} mean NDVI value, or -1 if no valid data
  */
 export async function fetchPlotNDVI(lat, lon, lookbackDays = 7) {
   const token = await getAccessToken();
@@ -190,5 +190,5 @@ export async function fetchPlotNDVI(lat, lon, lookbackDays = 7) {
 
   const data = await res.json();
   const stats = data?.data?.[0]?.outputs?.ndvi?.bands?.B0?.stats;
-  return stats?.mean ?? 0.5;
+  return stats?.mean ?? -1;
 }
