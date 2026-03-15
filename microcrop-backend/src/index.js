@@ -14,6 +14,8 @@ import { startPayoutWorker, getPayoutQueue } from './workers/payout.worker.js';
 import { startNotificationWorker, getNotificationQueue } from './workers/notification.worker.js';
 import { startBlockchainRetryWorker, getBlockchainRetryQueue } from './workers/blockchain.worker.js';
 import { startForageTriggerWorker } from './workers/forage-trigger.worker.js';
+import { startLivestockCREWorker } from './workers/livestock-cre.worker.js';
+import { startCropCREWorker } from './workers/crop-cre.worker.js';
 
 const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds forced exit
 
@@ -42,6 +44,8 @@ try {
   startNotificationWorker();
   startBlockchainRetryWorker();
   startForageTriggerWorker();
+  startLivestockCREWorker();
+  startCropCREWorker();
   logger.info('Background workers started');
 } catch (error) {
   logger.warn('Workers failed to start', { message: error.message });
