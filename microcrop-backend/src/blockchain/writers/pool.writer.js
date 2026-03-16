@@ -5,6 +5,28 @@ import logger from '../../utils/logger.js';
 import { BlockchainError } from '../../utils/errors.js';
 import { env } from '../../config/env.js';
 
+/**
+ * Try to decode a custom revert error from raw data using the factory interface.
+ */
+function decodeRevertError(error) {
+  const data = error.data || error?.error?.data;
+  if (!data || !riskPoolFactory) return null;
+
+  try {
+    const decoded = riskPoolFactory.interface.parseError(data);
+    if (decoded) {
+      const args = decoded.args.length > 0 ? ` (${decoded.args.join(', ')})` : '';
+      return `${decoded.name}${args}`;
+    }
+  } catch {
+    // Not a factory error, return raw selector for debugging
+    if (typeof data === 'string' && data.length >= 10) {
+      return `unknown error selector: ${data.slice(0, 10)}`;
+    }
+  }
+  return null;
+}
+
 // Minimal ABI interfaces for encoding calldata
 const USDC_IFACE = new ethers.Interface([
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -73,7 +95,49 @@ export async function createPrivatePool({
     try {
       await riskPoolFactory.createPrivatePool.estimateGas(params);
     } catch (gasError) {
-      throw new BlockchainError(`Transaction would revert: ${gasError.shortMessage || gasError.message}`, gasError);
+      const decoded = decodeRevertError(gasError);
+      logger.error('createPrivatePool estimateGas failed', {
+        decoded,
+        rawData: gasError.data || gasError?.error?.data,
+        shortMessage: gasError.shortMessage,
+        params: {
+          name: params.name,
+          symbol: params.symbol,
+          coverageType: params.coverageType,
+          region: params.region,
+          poolOwner: params.poolOwner,
+          productBuilder: params.productBuilder,
+          minDeposit: params.minDeposit.toString(),
+          maxDeposit: params.maxDeposit.toString(),
+          targetCapital: params.targetCapital.toString(),
+          maxCapital: params.maxCapital.toString(),
+        },
+        caller: wallet?.address,
+      });
+
+      // Try to read factory limits for diagnostics
+      try {
+        const [minTarget, maxPool, privMinDep, privMaxDep] = await Promise.all([
+          riskPoolFactory.MIN_TARGET_CAPITAL(),
+          riskPoolFactory.MAX_POOL_CAPITAL(),
+          riskPoolFactory.PRIVATE_MIN_DEPOSIT(),
+          riskPoolFactory.PRIVATE_MAX_DEPOSIT(),
+        ]);
+        logger.error('Factory limits for comparison', {
+          MIN_TARGET_CAPITAL: ethers.formatUnits(minTarget, 6),
+          MAX_POOL_CAPITAL: ethers.formatUnits(maxPool, 6),
+          PRIVATE_MIN_DEPOSIT: ethers.formatUnits(privMinDep, 6),
+          PRIVATE_MAX_DEPOSIT: ethers.formatUnits(privMaxDep, 6),
+          requested_targetCapital: ethers.formatUnits(params.targetCapital, 6),
+          requested_maxCapital: ethers.formatUnits(params.maxCapital, 6),
+          requested_minDeposit: ethers.formatUnits(params.minDeposit, 6),
+          requested_maxDeposit: ethers.formatUnits(params.maxDeposit, 6),
+        });
+      } catch (limitsErr) {
+        logger.error('Could not read factory limits', { error: limitsErr.message });
+      }
+
+      throw new BlockchainError(`Transaction would revert: ${decoded || gasError.shortMessage || gasError.message}`, gasError);
     }
 
     return await nonceManager.serialize(async () => {
