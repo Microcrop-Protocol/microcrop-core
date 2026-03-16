@@ -23,7 +23,7 @@ export const deployPoolSchema = Joi.object({
   name: Joi.string().max(100).optional(),
   symbol: Joi.string().max(10).optional(),
   poolType: Joi.string().valid('PUBLIC', 'PRIVATE', 'MUTUAL').default('PRIVATE'),
-  coverageType: Joi.number().min(0).max(4).default(4), // 0=DROUGHT, 1=FLOOD, 2=PEST, 3=DISEASE, 4=COMPREHENSIVE
+  coverageType: Joi.number().min(0).max(4).default(4), // 0=DROUGHT, 1=FLOOD, 2=BOTH, 3=EXCESS_RAIN, 4=COMPREHENSIVE
   region: Joi.string().max(100).default('Africa'),
   poolOwner: Joi.string()
     .pattern(/^0x[a-fA-F0-9]{40}$/)
