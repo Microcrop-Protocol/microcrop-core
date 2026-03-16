@@ -111,15 +111,16 @@ const organizationService = {
       }
 
       // Backend wallet needs ORGANIZATION_ROLE to call createPrivatePool
+      const ORGANIZATION_ROLE = '0xe0ae735793555d3fe7bb9c3f6f29e053c01c45cee237096b99b73ac619531dfb';
       const backendAddr = wallet?.address;
       if (backendAddr) {
-        const backendIsOrg = await riskPoolFactory.isOrganization(backendAddr);
-        if (!backendIsOrg) {
+        const hasOrgRole = await riskPoolFactory.hasRole(ORGANIZATION_ROLE, backendAddr);
+        if (!hasOrgRole) {
           await nonceManager.serialize(async () => {
-            logger.info('Registering backend wallet as organization on-chain', { backendAddr });
-            const regTx = await riskPoolFactory.registerOrganization(backendAddr);
-            await regTx.wait(1, 120000);
-            logger.info('Backend wallet registered as organization', { backendAddr });
+            logger.info('Granting ORGANIZATION_ROLE to backend wallet', { backendAddr });
+            const grantTx = await riskPoolFactory.grantRole(ORGANIZATION_ROLE, backendAddr);
+            await grantTx.wait(1, 120000);
+            logger.info('ORGANIZATION_ROLE granted to backend wallet', { backendAddr });
           });
         }
       }
