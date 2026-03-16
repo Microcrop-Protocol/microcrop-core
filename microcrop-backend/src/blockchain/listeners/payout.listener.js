@@ -52,11 +52,14 @@ async function handleDamageReportEvent(event) {
     return;
   }
 
+  // V2 contracts emit damagePercentage in basis points (0-10000). Convert to percentage (0-100).
+  const damagePercent = Number(damagePercentage) / 100;
+
   const assessment = await prisma.damageAssessment.create({
     data: {
       policyId: policy.id,
       organizationId: policy.organizationId,
-      damagePercent: Number(damagePercentage),
+      damagePercent,
       txHash: event.transactionHash,
       blockNumber: BigInt(event.blockNumber),
       source: 'ON_CHAIN',
@@ -66,11 +69,12 @@ async function handleDamageReportEvent(event) {
   logger.info('Damage assessment recorded', {
     assessmentId: assessment.id,
     policyId: policy.id,
-    damagePercent: Number(damagePercentage),
+    damagePercent,
+    damageBasisPoints: Number(damagePercentage),
   });
 
   // If damage percentage meets threshold, create payout
-  if (Number(damagePercentage) >= DAMAGE_THRESHOLD) {
+  if (damagePercent >= DAMAGE_THRESHOLD) {
     // Use the payoutAmount from the event (already calculated on-chain)
     const payoutAmountUSDC = Number(payoutAmount) / 1e6; // Convert from USDC decimals
 
@@ -80,7 +84,7 @@ async function handleDamageReportEvent(event) {
         organizationId: policy.organizationId,
         farmerId: policy.farmerId,
         amountUSDC: payoutAmountUSDC,
-        damagePercent: Number(damagePercentage),
+        damagePercent,
         status: 'PENDING',
       },
     });
