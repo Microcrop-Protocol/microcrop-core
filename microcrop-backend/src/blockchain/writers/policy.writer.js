@@ -7,8 +7,8 @@ import { BlockchainError } from '../../utils/errors.js';
 const CoverageType = {
   DROUGHT: 0,
   FLOOD: 1,
-  PEST: 2,
-  DISEASE: 3,
+  BOTH: 2,
+  EXCESS_RAIN: 3,
   COMPREHENSIVE: 4,
 };
 
@@ -98,22 +98,22 @@ export async function createPolicyOnChain({
 /**
  * Activate a pending policy
  */
-export async function activatePolicy(policyId, distributor, distributorName, region) {
+export async function activatePolicy(policyId, distributor, distributorName, region, poolAddress) {
   if (!policyManager) {
     throw new BlockchainError('PolicyManager contract not configured');
   }
 
   try {
-    logger.info('Activating policy on-chain', { policyId, distributor, distributorName, region });
+    logger.info('Activating policy on-chain', { policyId, distributor, distributorName, region, poolAddress });
 
     try {
-      await policyManager.activatePolicy.estimateGas(policyId, distributor, distributorName, region);
+      await policyManager.activatePolicy.estimateGas(policyId, distributor, distributorName, region, poolAddress);
     } catch (gasError) {
       throw new BlockchainError(`Transaction would revert: ${gasError.shortMessage || gasError.message}`, gasError);
     }
 
     return await nonceManager.serialize(async () => {
-      const tx = await policyManager.activatePolicy(policyId, distributor, distributorName, region);
+      const tx = await policyManager.activatePolicy(policyId, distributor, distributorName, region, poolAddress);
       const receipt = await tx.wait(1, 120000);
 
       logger.info('Policy activated on-chain', {
