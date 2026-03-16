@@ -1,6 +1,7 @@
 import prisma from '../config/database.js';
 import paymentProviderService, { PROVIDERS } from './payment-provider.service.js';
-import { createPolicyOnChain } from '../blockchain/writers/policy.writer.js';
+import { createPolicyOnChain, activatePolicy } from '../blockchain/writers/policy.writer.js';
+import { receivePremium, distributePremiumToPool } from '../blockchain/writers/treasury.writer.js';
 import { addBlockchainRetryJob } from '../workers/blockchain.worker.js';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
@@ -269,6 +270,7 @@ const paymentService = {
             provider,
           });
 
+          // Step 1: Create PENDING policy on-chain
           const { onChainPolicyId, txHash, blockNumber } = await createPolicyOnChain({
             farmerAddress,
             plotId: policy.plotId,
@@ -277,6 +279,19 @@ const paymentService = {
             durationDays: policy.durationDays,
             coverageType: 4, // COMPREHENSIVE
           });
+
+          const poolAddress = policy.organization.poolAddress;
+          const distributorAddress = policy.organization.walletAddress || backendWallet;
+          const distributorName = policy.organization.name || 'MicroCrop';
+
+          // Step 2: Record premium in Treasury
+          await receivePremium(onChainPolicyId, Number(policy.premium));
+
+          // Step 3: Distribute premium to RiskPool
+          await distributePremiumToPool(poolAddress, onChainPolicyId, Number(policy.premium), distributorAddress);
+
+          // Step 4: Activate policy + mint NFT
+          await activatePolicy(onChainPolicyId, distributorAddress, distributorName, 'Africa', poolAddress);
 
           // Update policy with on-chain data
           await prisma.policy.update({
@@ -292,7 +307,7 @@ const paymentService = {
             },
           });
 
-          logger.info('Policy activated on-chain', {
+          logger.info('Policy activated on-chain (V2 flow)', {
             policyId: transaction.policyId,
             onChainPolicyId,
             txHash,
