@@ -5,9 +5,9 @@ import { NotFoundError, ConflictError, ValidationError, BlockchainError } from '
 import logger from '../utils/logger.js';
 import * as poolWriter from '../blockchain/writers/pool.writer.js';
 import * as poolReader from '../blockchain/readers/pool.reader.js';
-import { riskPoolFactory, wallet } from '../config/blockchain.js';
+import { riskPoolFactory, wallet, provider, ethers } from '../config/blockchain.js';
 import nonceManager from '../blockchain/nonce-manager.js';
-import { createOrgWallet, getWalletBalances } from '../blockchain/wallet-manager.js';
+import { createOrgWallet, sendOrgTransaction, getWalletBalances } from '../blockchain/wallet-manager.js';
 
 const organizationService = {
   async registerOrganization(data) {
@@ -176,15 +176,24 @@ const organizationService = {
         });
       }
 
-      // Whitelist org wallet on private pool
+      // Whitelist org wallet on private pool (must be called by poolOwner who has ADMIN_ROLE on the pool)
       const walletToWhitelist = orgWallet?.address || org.walletAddress;
-      if (walletToWhitelist && poolType !== 'PUBLIC') {
+      if (walletToWhitelist && poolType !== 'PUBLIC' && orgWallet?.walletId) {
         try {
-          await poolWriter.addDepositor(result.poolAddress, walletToWhitelist);
-          logger.info('Org wallet whitelisted on pool', {
+          const poolIface = new ethers.Interface([
+            'function addDepositor(address depositor)',
+          ]);
+          const calldata = poolIface.encodeFunctionData('addDepositor', [walletToWhitelist]);
+          const tx = await sendOrgTransaction(orgWallet.walletId, result.poolAddress, calldata);
+          const receipt = await provider.waitForTransaction(tx.hash, 1, 120000);
+          if (!receipt || receipt.status === 0) {
+            throw new Error('addDepositor transaction failed');
+          }
+          logger.info('Org wallet whitelisted on pool via Privy', {
             orgId,
             poolAddress: result.poolAddress,
             walletAddress: walletToWhitelist,
+            txHash: tx.hash,
           });
         } catch (whitelistError) {
           logger.error('Failed to whitelist org wallet on pool', {

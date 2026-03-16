@@ -78,9 +78,14 @@ async function pollEvents() {
           blockNumber: event.blockNumber,
         });
 
-        // Find organization by poolOwner wallet
+        // Find organization by poolOwner wallet (could be adminWallet or Privy walletAddress)
         const org = await prisma.organization.findFirst({
-          where: { adminWallet: poolOwner.toLowerCase() },
+          where: {
+            OR: [
+              { adminWallet: poolOwner.toLowerCase() },
+              { walletAddress: poolOwner },
+            ],
+          },
         });
 
         if (org) {
