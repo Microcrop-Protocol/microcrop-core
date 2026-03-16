@@ -42,6 +42,7 @@ export const env = {
   contractPolicyManager: optional('CONTRACT_POLICY_MANAGER', ''),
   contractPayoutReceiver: optional('CONTRACT_PAYOUT_RECEIVER', ''),
   contractPolicyNFT: optional('CONTRACT_POLICY_NFT', ''),
+  contractUsdc: optional('CONTRACT_USDC', ''),
 
   // Dev contracts (Base Sepolia)
   baseSepoliaRpcUrl: optional('BASE_SEPOLIA_RPC_URL', ''),
