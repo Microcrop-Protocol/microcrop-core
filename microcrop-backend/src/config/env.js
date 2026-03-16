@@ -41,6 +41,7 @@ export const env = {
   contractPlatformTreasury: optional('CONTRACT_PLATFORM_TREASURY', ''),
   contractPolicyManager: optional('CONTRACT_POLICY_MANAGER', ''),
   contractPayoutReceiver: optional('CONTRACT_PAYOUT_RECEIVER', ''),
+  contractPolicyNFT: optional('CONTRACT_POLICY_NFT', ''),
 
   // Dev contracts (Base Sepolia)
   baseSepoliaRpcUrl: optional('BASE_SEPOLIA_RPC_URL', ''),
@@ -48,6 +49,7 @@ export const env = {
   contractPlatformTreasuryDev: optional('CONTRACT_PLATFORM_TREASURY_DEV', ''),
   contractPolicyManagerDev: optional('CONTRACT_POLICY_MANAGER_DEV', ''),
   contractPayoutReceiverDev: optional('CONTRACT_PAYOUT_RECEIVER_DEV', ''),
+  contractPolicyNFTDev: optional('CONTRACT_POLICY_NFT_DEV', ''),
   contractUsdcDev: optional('CONTRACT_USDC_DEV', ''),
 
   // Backend wallet (for on-chain operations)
