@@ -65,15 +65,32 @@ const organizationService = {
         throw new ValidationError('targetCapital is required');
       }
 
-      // Create Privy wallet early so it can serve as poolOwner if needed
+      // Reuse existing Privy wallet or create a new one
       let orgWallet = null;
-      if (!org.privyWalletId) {
+      if (org.privyWalletId && org.walletAddress) {
+        // Wallet already exists from a previous attempt — reuse it
+        orgWallet = { walletId: org.privyWalletId, address: org.walletAddress };
+        logger.info('Reusing existing Privy wallet for organization', {
+          orgId,
+          walletId: orgWallet.walletId,
+          address: orgWallet.address,
+        });
+      } else {
         try {
           orgWallet = await createOrgWallet();
           logger.info('Created Privy wallet for organization', {
             orgId,
             walletId: orgWallet.walletId,
             address: orgWallet.address,
+          });
+
+          // Persist wallet to DB immediately so retries don't create duplicates
+          await prisma.organization.update({
+            where: { id: orgId },
+            data: {
+              privyWalletId: orgWallet.walletId,
+              walletAddress: orgWallet.address,
+            },
           });
         } catch (walletError) {
           logger.error('Failed to create org wallet', {
@@ -161,18 +178,10 @@ const organizationService = {
         }
       }
 
-      // Update organization with pool address and wallet
-      const updateData = {
-        poolAddress: result.poolAddress,
-      };
-      if (orgWallet) {
-        updateData.privyWalletId = orgWallet.walletId;
-        updateData.walletAddress = orgWallet.address;
-      }
-
+      // Update organization with pool address
       const updated = await prisma.organization.update({
         where: { id: orgId },
-        data: updateData,
+        data: { poolAddress: result.poolAddress },
       });
 
       logger.info('Pool deployed for organization', {
