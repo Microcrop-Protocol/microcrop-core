@@ -6,12 +6,14 @@ export const contractAddresses = {
     platformTreasury: env.contractPlatformTreasury,
     policyManager: env.contractPolicyManager,
     payoutReceiver: env.contractPayoutReceiver,
+    policyNFT: env.contractPolicyNFT,
   },
   testnet: {
     riskPoolFactory: env.contractRiskPoolFactoryDev,
     platformTreasury: env.contractPlatformTreasuryDev,
-    policyManager: env.contractPolicyManager,
-    payoutReceiver: env.contractPayoutReceiver,
+    policyManager: env.contractPolicyManagerDev,
+    payoutReceiver: env.contractPayoutReceiverDev,
+    policyNFT: env.contractPolicyNFTDev,
   },
 };
 
