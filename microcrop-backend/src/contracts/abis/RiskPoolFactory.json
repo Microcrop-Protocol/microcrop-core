@@ -589,6 +589,19 @@
   },
   {
     "type": "function",
+    "name": "grantPolicyManagerToPool",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "grantRole",
     "inputs": [
       {
@@ -710,6 +723,19 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "policyManager",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -910,10 +936,36 @@
   },
   {
     "type": "function",
+    "name": "setPolicyManager",
+    "inputs": [
+      {
+        "name": "_policyManager",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setPoolImplementation",
     "inputs": [
       {
         "name": "newImplementation",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setProtocolTreasury",
+    "inputs": [
+      {
+        "name": "newProtocolTreasury",
         "type": "address",
         "internalType": "address"
       }
@@ -1029,6 +1081,19 @@
     "inputs": [
       {
         "name": "organization",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PolicyManagerUpdated",
+    "inputs": [
+      {
+        "name": "newPolicyManager",
         "type": "address",
         "indexed": true,
         "internalType": "address"

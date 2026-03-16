@@ -1,25 +1,23 @@
 [
   {
     "type": "constructor",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "name_",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "symbol_",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
     "name": "ADMIN_ROLE",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "BACKEND_ROLE",
     "inputs": [],
     "outputs": [
       {
@@ -45,85 +43,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_ACTIVE_POLICIES_PER_FARMER",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_CLAIMS_PER_FARMER_PER_YEAR",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_DURATION_DAYS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_SUM_INSURED",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MIN_DURATION_DAYS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MIN_SUM_INSURED",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "ORACLE_ROLE",
+    "name": "MINTER_ROLE",
     "inputs": [],
     "outputs": [
       {
@@ -136,20 +56,44 @@
   },
   {
     "type": "function",
-    "name": "UPGRADER_ROLE",
-    "inputs": [],
+    "name": "approve",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "balanceOf",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [
       {
         "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "UPGRADE_INTERFACE_VERSION",
+    "name": "baseExternalURI",
     "inputs": [],
     "outputs": [
       {
@@ -162,12 +106,24 @@
   },
   {
     "type": "function",
-    "name": "activatePolicy",
+    "name": "certificates",
     "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
       {
         "name": "policyId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "farmer",
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "distributor",
@@ -180,66 +136,6 @@
         "internalType": "string"
       },
       {
-        "name": "region",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "poolAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "canFarmerClaim",
-    "inputs": [
-      {
-        "name": "farmer",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "hasCapacity",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "cancelPolicy",
-    "inputs": [
-      {
-        "name": "policyId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "createPolicy",
-    "inputs": [
-      {
-        "name": "farmer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "plotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "sumInsured",
         "type": "uint256",
         "internalType": "uint256"
@@ -250,88 +146,56 @@
         "internalType": "uint256"
       },
       {
-        "name": "durationDays",
+        "name": "startDate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "endDate",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
         "name": "coverageType",
         "type": "uint8",
-        "internalType": "enum PolicyManager.CoverageType"
-      }
-    ],
-    "outputs": [
+        "internalType": "enum PolicyNFT.CoverageType"
+      },
       {
-        "name": "policyId",
+        "name": "region",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "plotId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "expirePolicy",
-    "inputs": [
+      },
       {
-        "name": "policyId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getCurrentYear",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "year",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "isActive",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "getFarmerActiveCount",
+    "name": "distributorPolicies",
     "inputs": [
       {
-        "name": "farmer",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "count",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getFarmerClaimCount",
-    "inputs": [
-      {
-        "name": "farmer",
+        "name": "",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "year",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "count",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -340,41 +204,41 @@
   },
   {
     "type": "function",
-    "name": "getFarmerPolicies",
+    "name": "getApproved",
     "inputs": [
       {
-        "name": "farmer",
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [
-      {
-        "name": "policyIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "getPolicy",
+    "name": "getCertificate",
     "inputs": [
       {
-        "name": "policyId",
+        "name": "tokenId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "policy",
+        "name": "",
         "type": "tuple",
-        "internalType": "struct PolicyManager.Policy",
+        "internalType": "struct PolicyNFT.PolicyCertificate",
         "components": [
           {
-            "name": "id",
+            "name": "policyId",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -384,9 +248,14 @@
             "internalType": "address"
           },
           {
-            "name": "plotId",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "distributor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "distributorName",
+            "type": "string",
+            "internalType": "string"
           },
           {
             "name": "sumInsured",
@@ -411,17 +280,22 @@
           {
             "name": "coverageType",
             "type": "uint8",
-            "internalType": "enum PolicyManager.CoverageType"
+            "internalType": "enum PolicyNFT.CoverageType"
           },
           {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "enum PolicyManager.PolicyStatus"
+            "name": "region",
+            "type": "string",
+            "internalType": "string"
           },
           {
-            "name": "createdAt",
+            "name": "plotId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "isActive",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -430,19 +304,19 @@
   },
   {
     "type": "function",
-    "name": "getPolicyPool",
+    "name": "getDistributorPolicies",
     "inputs": [
       {
-        "name": "policyId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "distributor",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "pool",
-        "type": "address",
-        "internalType": "address"
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -462,19 +336,6 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTotalPolicies",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -523,33 +384,132 @@
   },
   {
     "type": "function",
-    "name": "incrementClaimCount",
+    "name": "isApprovedForAll",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "mintPolicy",
     "inputs": [
       {
         "name": "farmer",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "policyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "distributor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "distributorName",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "sumInsured",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "premium",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "startDate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "endDate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "coverageType",
+        "type": "uint8",
+        "internalType": "enum PolicyNFT.CoverageType"
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "plotId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "initialize",
+    "name": "name",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ownerOf",
     "inputs": [
       {
-        "name": "_admin",
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "isPolicyActive",
+    "name": "policyNFTExists",
     "inputs": [
       {
         "name": "policyId",
@@ -559,7 +519,7 @@
     ],
     "outputs": [
       {
-        "name": "isActive",
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -568,58 +528,19 @@
   },
   {
     "type": "function",
-    "name": "markAsClaimed",
+    "name": "policyToToken",
     "inputs": [
       {
-        "name": "policyId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "policyExists",
-    "inputs": [
-      {
-        "name": "policyId",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "exists",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "policyNFT",
-    "inputs": [],
-    "outputs": [
-      {
         "name": "",
-        "type": "address",
-        "internalType": "contract PolicyNFT"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "proxiableUUID",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -662,25 +583,22 @@
   },
   {
     "type": "function",
-    "name": "riskPoolFactory",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IRiskPoolFactory"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setPolicyNFT",
+    "name": "safeTransferFrom",
     "inputs": [
       {
-        "name": "_policyNFT",
+        "name": "from",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -688,12 +606,58 @@
   },
   {
     "type": "function",
-    "name": "setRiskPoolFactory",
+    "name": "safeTransferFrom",
     "inputs": [
       {
-        "name": "_factory",
+        "name": "from",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setApprovalForAll",
+    "inputs": [
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "approved",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBaseExternalURI",
+    "inputs": [
+      {
+        "name": "uri",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [],
@@ -720,25 +684,7 @@
   },
   {
     "type": "function",
-    "name": "upgradeToAndCall",
-    "inputs": [
-      {
-        "name": "newImplementation",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "data",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "version",
+    "name": "symbol",
     "inputs": [],
     "outputs": [
       {
@@ -747,12 +693,222 @@
         "internalType": "string"
       }
     ],
-    "stateMutability": "pure"
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tokenByIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tokenOfOwnerByIndex",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tokenURI",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalSupply",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "transferFrom",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "updatePolicyStatus",
+    "inputs": [
+      {
+        "name": "policyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "isActive",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
-    "name": "ClaimCountIncremented",
+    "name": "Approval",
     "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "approved",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ApprovalForAll",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "approved",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BatchMetadataUpdate",
+    "inputs": [
+      {
+        "name": "_fromTokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "_toTokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MetadataUpdate",
+    "inputs": [
+      {
+        "name": "_tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PolicyNFTMinted",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "policyId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "farmer",
         "type": "address",
@@ -760,173 +916,35 @@
         "internalType": "address"
       },
       {
-        "name": "year",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newCount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Initialized",
-    "inputs": [
-      {
-        "name": "version",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PolicyActivated",
-    "inputs": [
-      {
-        "name": "policyId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "activatedAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PolicyCancelled",
-    "inputs": [
-      {
-        "name": "policyId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cancelledAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PolicyClaimed",
-    "inputs": [
-      {
-        "name": "policyId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "claimedAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PolicyCreated",
-    "inputs": [
-      {
-        "name": "policyId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "farmer",
+        "name": "distributor",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
-      },
-      {
-        "name": "plotId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
       },
       {
         "name": "sumInsured",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "premium",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "startDate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "endDate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "coverageType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum PolicyManager.CoverageType"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "PolicyExpiredByBackend",
+    "name": "PolicyStatusUpdated",
     "inputs": [
       {
-        "name": "policyId",
+        "name": "tokenId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "expiredAt",
-        "type": "uint256",
+        "name": "isActive",
+        "type": "bool",
         "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PolicyNFTSet",
-    "inputs": [
-      {
-        "name": "policyNFT",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -1008,13 +1026,25 @@
   },
   {
     "type": "event",
-    "name": "Upgraded",
+    "name": "Transfer",
     "inputs": [
       {
-        "name": "implementation",
+        "name": "from",
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1042,10 +1072,25 @@
   },
   {
     "type": "error",
-    "name": "AddressEmptyCode",
+    "name": "ERC721EnumerableForbiddenBatchMint",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ERC721IncorrectOwner",
     "inputs": [
       {
-        "name": "target",
+        "name": "sender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       }
@@ -1053,10 +1098,26 @@
   },
   {
     "type": "error",
-    "name": "ERC1967InvalidImplementation",
+    "name": "ERC721InsufficientApproval",
     "inputs": [
       {
-        "name": "implementation",
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC721InvalidApprover",
+    "inputs": [
+      {
+        "name": "approver",
         "type": "address",
         "internalType": "address"
       }
@@ -1064,35 +1125,54 @@
   },
   {
     "type": "error",
-    "name": "ERC1967NonPayable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FactoryNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FailedCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidDuration",
+    "name": "ERC721InvalidOperator",
     "inputs": [
       {
-        "name": "durationDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC721InvalidOwner",
+    "inputs": [
       {
-        "name": "minDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC721InvalidReceiver",
+    "inputs": [
       {
-        "name": "maxDays",
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC721InvalidSender",
+    "inputs": [
+      {
+        "name": "sender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1100,49 +1180,39 @@
   },
   {
     "type": "error",
-    "name": "InvalidInitialization",
+    "name": "ERC721OutOfBoundsIndex",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPolicyId",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InvalidPolicyStatus",
+    "name": "PolicyAlreadyMinted",
     "inputs": [
       {
         "name": "policyId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "enum PolicyManager.PolicyStatus"
-      },
-      {
-        "name": "expected",
-        "type": "uint8",
-        "internalType": "enum PolicyManager.PolicyStatus"
       }
     ]
   },
   {
     "type": "error",
-    "name": "InvalidPool",
-    "inputs": [
-      {
-        "name": "poolAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NotInitializing",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PolicyDoesNotExist",
+    "name": "PolicyNotFound",
     "inputs": [
       {
         "name": "policyId",
@@ -1153,153 +1223,18 @@
   },
   {
     "type": "error",
-    "name": "PolicyExpired",
+    "name": "TransferWhileActive",
     "inputs": [
       {
-        "name": "policyId",
+        "name": "tokenId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "endDate",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentTime",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PolicyNFTNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SumInsuredTooHigh",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maximum",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SumInsuredTooLow",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minimum",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TooManyActivePolicies",
-    "inputs": [
-      {
-        "name": "farmer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TooManyClaimsThisYear",
-    "inputs": [
-      {
-        "name": "farmer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "year",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UUPSUnauthorizedCallContext",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UUPSUnsupportedProxiableUUID",
-    "inputs": [
-      {
-        "name": "slot",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },
   {
     "type": "error",
     "name": "ZeroAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroAddressDistributor",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroAddressFarmer",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroAddressPool",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroPremium",
     "inputs": []
   }
 ]

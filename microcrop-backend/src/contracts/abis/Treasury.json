@@ -168,6 +168,34 @@
   },
   {
     "type": "function",
+    "name": "distributePremiumToPool",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "policyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "grossPremium",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "distributor",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "emergencyWithdraw",
     "inputs": [
       {
@@ -183,6 +211,19 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "factory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -438,6 +479,19 @@
   },
   {
     "type": "function",
+    "name": "peakPremiums",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "platformFeePercent",
     "inputs": [],
     "outputs": [
@@ -494,11 +548,6 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -551,6 +600,32 @@
       },
       {
         "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBackendWallet",
+    "inputs": [
+      {
+        "name": "newBackendWallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setFactory",
+    "inputs": [
+      {
+        "name": "_factory",
         "type": "address",
         "internalType": "address"
       }
@@ -679,6 +754,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "BackendWalletUpdated",
+    "inputs": [
+      {
+        "name": "oldWallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newWallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1046,6 +1140,17 @@
     "type": "error",
     "name": "InvalidInitialization",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPool",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
