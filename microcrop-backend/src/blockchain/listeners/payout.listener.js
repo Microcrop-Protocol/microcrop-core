@@ -27,7 +27,7 @@ async function getStartBlock() {
   }
 
   const currentBlock = await provider.getBlockNumber();
-  return Math.max(0, currentBlock - 1800);
+  return Math.max(0, currentBlock - 10);
 }
 
 async function handleDamageReportEvent(event) {
@@ -175,7 +175,7 @@ async function pollEvents() {
     }
 
     const fromBlock = lastProcessedBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 2000);
+    const toBlock = Math.min(currentBlock, fromBlock + 10);
 
     // Poll for DamageReportReceived events
     const damageFilter = payoutReceiver.filters.DamageReportReceived();

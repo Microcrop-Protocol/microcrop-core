@@ -27,7 +27,7 @@ async function getStartBlock() {
 
   // Default to recent blocks (last ~1 hour on Base)
   const currentBlock = await provider.getBlockNumber();
-  return Math.max(0, currentBlock - 1800);
+  return Math.max(0, currentBlock - 10);
 }
 
 async function pollEvents() {
@@ -57,7 +57,7 @@ async function pollEvents() {
 
     // Query in chunks to avoid RPC limits
     const fromBlock = lastProcessedBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 2000);
+    const toBlock = Math.min(currentBlock, fromBlock + 10);
 
     // Listen for PoolCreated event (new event name in updated ABI)
     const filter = riskPoolFactory.filters.PoolCreated();

@@ -23,7 +23,7 @@ async function getStartBlock(contractAddress) {
 
   // Default to recent blocks
   const currentBlock = await provider.getBlockNumber();
-  return Math.max(0, currentBlock - 1800);
+  return Math.max(0, currentBlock - 10);
 }
 
 // Poll PolicyManager for PolicyCreated events
@@ -55,7 +55,7 @@ async function pollPolicyManagerEvents() {
     }
 
     const fromBlock = policyManagerLastBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 2000);
+    const toBlock = Math.min(currentBlock, fromBlock + 10);
 
     // Listen for PolicyCreated events from PolicyManager
     const filter = policyManager.filters.PolicyCreated();
@@ -188,7 +188,7 @@ async function pollEventsForPool(org, riskPool, lastBlockRef) {
     }
 
     const fromBlock = lastBlockRef.value;
-    const toBlock = Math.min(currentBlock, fromBlock + 2000);
+    const toBlock = Math.min(currentBlock, fromBlock + 10);
 
     // Listen for PremiumCollected events from RiskPool
     const filter = riskPool.filters.PremiumCollected();
