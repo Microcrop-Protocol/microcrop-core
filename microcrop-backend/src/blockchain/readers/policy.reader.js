@@ -15,8 +15,8 @@ const PolicyStatus = {
 const CoverageType = {
   0: 'DROUGHT',
   1: 'FLOOD',
-  2: 'PEST',
-  3: 'DISEASE',
+  2: 'BOTH',
+  3: 'EXCESS_RAIN',
   4: 'COMPREHENSIVE',
 };
 
