@@ -47,8 +47,9 @@ if (!wallet) {
 const RiskPoolFactoryABI = loadABI('RiskPoolFactory.json');
 const RiskPoolABI = loadABI('RiskPool.json');
 const PolicyManagerABI = loadABI('PolicyManager.json');
-const PlatformTreasuryABI = loadABI('PlatformTreasury.json');
+const TreasuryABI = loadABI('Treasury.json');
 const PayoutReceiverABI = loadABI('PayoutReceiver.json');
+const PolicyNFTABI = loadABI('PolicyNFT.json');
 
 // Contract instances
 function createContract(address, abi, signerOrProvider) {
@@ -75,11 +76,16 @@ const payoutReceiverAddr = env.isDev
   ? env.contractPayoutReceiverDev
   : env.contractPayoutReceiver;
 
+const policyNFTAddr = env.isDev
+  ? env.contractPolicyNFTDev
+  : env.contractPolicyNFT;
+
 // Create contract instances
 export const riskPoolFactory = createContract(factoryAddr, RiskPoolFactoryABI, wallet);
-export const platformTreasury = createContract(treasuryAddr, PlatformTreasuryABI, provider);
+export const platformTreasury = createContract(treasuryAddr, TreasuryABI, wallet);
 export const policyManager = createContract(policyManagerAddr, PolicyManagerABI, wallet);
 export const payoutReceiver = createContract(payoutReceiverAddr, PayoutReceiverABI, provider);
+export const policyNFT = createContract(policyNFTAddr, PolicyNFTABI, provider);
 
 // Log contract configuration
 if (env.isDev) {
@@ -89,6 +95,7 @@ if (env.isDev) {
     treasuryAddr,
     policyManagerAddr,
     payoutReceiverAddr,
+    policyNFTAddr,
     walletConfigured: !!wallet,
   });
 }
