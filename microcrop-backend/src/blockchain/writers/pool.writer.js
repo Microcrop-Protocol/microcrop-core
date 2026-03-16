@@ -29,8 +29,8 @@ const PoolType = {
 const CoverageType = {
   DROUGHT: 0,
   FLOOD: 1,
-  PEST: 2,
-  DISEASE: 3,
+  BOTH: 2,
+  EXCESS_RAIN: 3,
   COMPREHENSIVE: 4,
 };
 
