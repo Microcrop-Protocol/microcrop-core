@@ -2,7 +2,8 @@ import Bull from 'bull';
 import { env } from '../config/env.js';
 import prisma from '../config/database.js';
 import logger from '../utils/logger.js';
-import { createPolicyOnChain } from '../blockchain/writers/policy.writer.js';
+import { createPolicyOnChain, activatePolicy } from '../blockchain/writers/policy.writer.js';
+import { receivePremium, distributePremiumToPool } from '../blockchain/writers/treasury.writer.js';
 import { addNotificationJob } from './notification.worker.js';
 import { BLOCKCHAIN_RETRY_QUEUE_NAME } from '../utils/constants.js';
 
@@ -98,6 +99,7 @@ async function processCreatePolicy(policyId) {
     throw new Error('No farmer wallet or backend wallet configured');
   }
 
+  // Step 1: Create PENDING policy on-chain
   const { onChainPolicyId, txHash, blockNumber } = await createPolicyOnChain({
     farmerAddress,
     plotId: policy.plotId,
@@ -106,6 +108,19 @@ async function processCreatePolicy(policyId) {
     durationDays: policy.durationDays,
     coverageType: 4, // COMPREHENSIVE
   });
+
+  const poolAddress = policy.organization.poolAddress;
+  const distributorAddress = policy.organization.walletAddress || env.backendWallet;
+  const distributorName = policy.organization.name || 'MicroCrop';
+
+  // Step 2: Record premium in Treasury
+  await receivePremium(onChainPolicyId, Number(policy.premium));
+
+  // Step 3: Distribute premium to RiskPool
+  await distributePremiumToPool(poolAddress, onChainPolicyId, Number(policy.premium), distributorAddress);
+
+  // Step 4: Activate policy + mint NFT
+  await activatePolicy(onChainPolicyId, distributorAddress, distributorName, 'Africa', poolAddress);
 
   await prisma.policy.update({
     where: { id: policyId },
@@ -117,7 +132,7 @@ async function processCreatePolicy(policyId) {
     },
   });
 
-  logger.info('Blockchain retry: policy activated on-chain', {
+  logger.info('Blockchain retry: policy activated on-chain (V2 flow)', {
     policyId,
     onChainPolicyId,
     txHash,
