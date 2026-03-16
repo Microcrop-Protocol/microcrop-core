@@ -55,7 +55,7 @@ async function pollPolicyManagerEvents() {
     }
 
     const fromBlock = policyManagerLastBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 10);
+    const toBlock = Math.min(currentBlock, fromBlock + 9);
 
     // Listen for PolicyCreated events from PolicyManager
     const filter = policyManager.filters.PolicyCreated();
@@ -188,7 +188,7 @@ async function pollEventsForPool(org, riskPool, lastBlockRef) {
     }
 
     const fromBlock = lastBlockRef.value;
-    const toBlock = Math.min(currentBlock, fromBlock + 10);
+    const toBlock = Math.min(currentBlock, fromBlock + 9);
 
     // Listen for PremiumCollected events from RiskPool
     const filter = riskPool.filters.PremiumCollected();

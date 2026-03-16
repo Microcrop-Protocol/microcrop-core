@@ -57,7 +57,7 @@ async function pollEvents() {
 
     // Query in chunks to avoid RPC limits
     const fromBlock = lastProcessedBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 10);
+    const toBlock = Math.min(currentBlock, fromBlock + 9);
 
     // Listen for PoolCreated event (new event name in updated ABI)
     const filter = riskPoolFactory.filters.PoolCreated();

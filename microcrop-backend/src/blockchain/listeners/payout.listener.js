@@ -175,7 +175,7 @@ async function pollEvents() {
     }
 
     const fromBlock = lastProcessedBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 10);
+    const toBlock = Math.min(currentBlock, fromBlock + 9);
 
     // Poll for DamageReportReceived events
     const damageFilter = payoutReceiver.filters.DamageReportReceived();
