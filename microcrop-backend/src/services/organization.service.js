@@ -5,7 +5,7 @@ import { NotFoundError, ConflictError, ValidationError, BlockchainError } from '
 import logger from '../utils/logger.js';
 import * as poolWriter from '../blockchain/writers/pool.writer.js';
 import * as poolReader from '../blockchain/readers/pool.reader.js';
-import { riskPoolFactory } from '../config/blockchain.js';
+import { riskPoolFactory, wallet } from '../config/blockchain.js';
 import nonceManager from '../blockchain/nonce-manager.js';
 import { createOrgWallet, getWalletBalances } from '../blockchain/wallet-manager.js';
 
@@ -105,10 +105,25 @@ const organizationService = {
         throw new ValidationError('Organization admin wallet or poolOwner is required');
       }
 
-      // Register poolOwner on-chain if not already registered
+      // Register poolOwner and backend wallet on-chain if not already registered
       if (!riskPoolFactory) {
         throw new BlockchainError('RiskPoolFactory contract not configured');
       }
+
+      // Backend wallet needs ORGANIZATION_ROLE to call createPrivatePool
+      const backendAddr = wallet?.address;
+      if (backendAddr) {
+        const backendIsOrg = await riskPoolFactory.isOrganization(backendAddr);
+        if (!backendIsOrg) {
+          await nonceManager.serialize(async () => {
+            logger.info('Registering backend wallet as organization on-chain', { backendAddr });
+            const regTx = await riskPoolFactory.registerOrganization(backendAddr);
+            await regTx.wait(1, 120000);
+            logger.info('Backend wallet registered as organization', { backendAddr });
+          });
+        }
+      }
+
       const isRegistered = await riskPoolFactory.isOrganization(poolOwner);
       if (!isRegistered) {
         await nonceManager.serialize(async () => {
