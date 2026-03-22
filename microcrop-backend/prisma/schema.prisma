@@ -221,11 +221,20 @@ model Plot {
   cropType     CropType
   plantingDate DateTime?
 
+  // Satellite monitoring
+  boundary      Json?
+  centroidLat   Decimal?  @db.Decimal(10, 8)
+  centroidLon   Decimal?  @db.Decimal(11, 8)
+  areaHectares  Decimal?  @db.Decimal(10, 4)
+
   // Weather station assignment
   weatherStationId String?
 
   // Relations
-  policies Policy[]
+  policies      Policy[]
+  satelliteData SatelliteData[]
+  ndviBaselines NDVIBaseline[]
+  fraudFlags    FraudFlag[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -788,18 +797,28 @@ model WeatherEvent {
 model SatelliteData {
   id     String @id @default(uuid())
   plotId String
+  plot   Plot   @relation(fields: [plotId], references: [id], onDelete: Cascade)
+
+  organizationId String?
 
   captureDate DateTime
   ndvi        Decimal? @db.Decimal(4, 3)
+  ndviMin     Decimal? @db.Decimal(4, 3)
+  ndviMax     Decimal? @db.Decimal(4, 3)
+  ndviStdDev  Decimal? @db.Decimal(4, 3)
   evi         Decimal? @db.Decimal(4, 3)
   cloudCover  Decimal? @db.Decimal(5, 2)
   biomass     Decimal? @db.Decimal(5, 2)
+  sampleCount Int?
+  source      String   @default("SENTINEL2")
 
   imageUrl String?
 
   createdAt DateTime @default(now())
 
+  @@unique([plotId, captureDate, source])
   @@index([plotId, captureDate(sort: Desc)])
+  @@index([organizationId, captureDate(sort: Desc)])
 }
 
 // ============================================
@@ -1019,4 +1038,87 @@ enum InvitationStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+}
+
+// ============================================
+// NDVI BASELINE (Per-plot historical baselines)
+// ============================================
+
+model NDVIBaseline {
+  id     String @id @default(uuid())
+  plotId String
+  plot   Plot   @relation(fields: [plotId], references: [id], onDelete: Cascade)
+
+  periodStart    Int
+  periodEnd      Int
+  baselineMean   Decimal @db.Decimal(4, 3)
+  baselineMedian Decimal @db.Decimal(4, 3)
+  baselineStdDev Decimal @db.Decimal(4, 3)
+  yearsIncluded  Int
+
+  cropType CropType
+
+  computedAt DateTime @default(now())
+
+  @@unique([plotId, periodStart, periodEnd])
+  @@index([plotId])
+}
+
+// ============================================
+// FRAUD FLAG (Satellite-based fraud detection)
+// ============================================
+
+model FraudFlag {
+  id             String @id @default(uuid())
+  policyId       String?
+  plotId         String?
+  farmerId       String?
+  organizationId String
+
+  plot Plot? @relation(fields: [plotId], references: [id], onDelete: SetNull)
+
+  type        FraudFlagType
+  severity    FraudSeverity  @default(MEDIUM)
+  description String
+
+  claimedDamage   Decimal? @db.Decimal(5, 2)
+  satelliteNdvi   Decimal? @db.Decimal(4, 3)
+  baselineNdvi    Decimal? @db.Decimal(4, 3)
+  confidenceScore Decimal  @db.Decimal(3, 2)
+
+  status     FraudFlagStatus @default(OPEN)
+  resolvedBy String?
+  resolvedAt DateTime?
+  resolution String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([policyId])
+  @@index([plotId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+enum FraudFlagType {
+  NDVI_MISMATCH
+  BOUNDARY_OVERLAP
+  SUSPICIOUS_TIMING
+  HISTORICAL_ANOMALY
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FraudFlagStatus {
+  OPEN
+  INVESTIGATING
+  CONFIRMED_FRAUD
+  CLEARED
+  DISMISSED
 }

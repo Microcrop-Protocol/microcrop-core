@@ -102,6 +102,18 @@ export const env = {
   weatherxmApiUrl: optional('WEATHERXM_API_URL', 'https://api.weatherxm.com/v1'),
   planetApiKey: optional('PLANET_API_KEY', ''),
   planetApiUrl: optional('PLANET_API_URL', 'https://api.planet.com/data/v1'),
+
+  // Sentinel Hub (backend satellite service)
+  sentinelClientId: optional('SENTINEL_CLIENT_ID', ''),
+  sentinelClientSecret: optional('SENTINEL_CLIENT_SECRET', ''),
+  sentinelApiUrl: optional('SENTINEL_API_URL', 'https://services.sentinel-hub.com/api/v1'),
+  sentinelOAuthUrl: optional('SENTINEL_OAUTH_URL', 'https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token'),
+
+  // Satellite monitoring
+  satelliteMonitoringEnabled: optional('SATELLITE_MONITORING_ENABLED', 'true') === 'true',
+  satelliteMonitoringCron: optional('SATELLITE_MONITORING_CRON', '0 3 */5 * *'),
+  ndviLookbackDays: parseInt(optional('NDVI_LOOKBACK_DAYS', '7'), 10),
+  ndviBaselineYears: parseInt(optional('NDVI_BASELINE_YEARS', '3'), 10),
 };
 
 export default env;

@@ -108,3 +108,16 @@ export const NOTIFICATION_QUEUE_NAME = 'notifications';
 export const BLOCKCHAIN_RETRY_QUEUE_NAME = 'blockchain-retry';
 
 export const FORAGE_TRIGGER_QUEUE_NAME = 'forage-trigger';
+
+export const SATELLITE_QUEUE_NAME = 'satellite-monitoring';
+
+export const NDVI_THRESHOLDS = {
+  EXCELLENT: 0.7,
+  GOOD: 0.5,
+  MODERATE: 0.3,
+  POOR: 0.2,
+  CRITICAL: 0.1,
+};
+
+export const FRAUD_NDVI_MISMATCH_THRESHOLD = 0.3;
+export const FRAUD_CONFIDENCE_THRESHOLD = 0.7;
