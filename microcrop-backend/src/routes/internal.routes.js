@@ -67,6 +67,7 @@ router.get('/active-policies', async (_req, res, next) => {
             latitude: true,
             longitude: true,
             cropType: true,
+            boundary: true,
           },
         },
         herd: {
@@ -113,6 +114,7 @@ router.get('/active-policies', async (_req, res, next) => {
         productType: 'CROP',
         latitude: p.plot ? parseFloat(p.plot.latitude) : null,
         longitude: p.plot ? parseFloat(p.plot.longitude) : null,
+        boundary: p.plot?.boundary || null,
         cropType: p.plot?.cropType || null,
         sumInsured: parseFloat(p.sumInsured),
         farmerWallet: p.farmer?.walletAddress || null,
@@ -245,6 +247,50 @@ router.get('/insurance-units', async (_req, res, next) => {
     });
 
     res.json({ success: true, units });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/internal/satellite-data
+ *
+ * Upsert satellite NDVI data for a plot.
+ * Called by CRE when new satellite imagery is processed.
+ */
+router.post('/satellite-data', async (req, res, next) => {
+  try {
+    const { plotId, ndvi, ndviMin, ndviMax, ndviStdDev, captureDate, cloudCover, source } = req.body;
+
+    if (!plotId || ndvi === undefined || !captureDate) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'BAD_REQUEST', message: 'plotId, ndvi, and captureDate are required' },
+      });
+    }
+
+    const result = await prisma.satelliteData.upsert({
+      where: {
+        plotId_captureDate_source: {
+          plotId,
+          captureDate: new Date(captureDate),
+          source: source || 'SENTINEL2',
+        },
+      },
+      update: { ndvi, ndviMin, ndviMax, ndviStdDev, cloudCover },
+      create: {
+        plotId,
+        ndvi,
+        ndviMin,
+        ndviMax,
+        ndviStdDev,
+        captureDate: new Date(captureDate),
+        cloudCover,
+        source: source || 'SENTINEL2',
+      },
+    });
+
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

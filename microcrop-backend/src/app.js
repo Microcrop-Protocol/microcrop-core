@@ -32,6 +32,7 @@ import { applicationRouter } from './routes/application.routes.js';
 import { invitationRouter } from './routes/invitation.routes.js';
 import { herdsRouter } from './routes/herds.routes.js';
 import { insuranceUnitsRouter } from './routes/insurance-units.routes.js';
+import { satelliteRouter } from './routes/satellite.routes.js';
 
 const app = express();
 
@@ -139,6 +140,7 @@ app.use('/api/export', exportRouter);
 app.use('/api/applications', applicationRouter);
 app.use('/api/invitations', invitationRouter);
 app.use('/api/insurance-units', insuranceUnitsRouter);
+app.use('/api/satellite', satelliteRouter);
 
 // 404 handler
 app.use((_req, res) => {
