@@ -14,6 +14,7 @@ import { startPayoutWorker, getPayoutQueue } from './workers/payout.worker.js';
 import { startNotificationWorker, getNotificationQueue } from './workers/notification.worker.js';
 import { startBlockchainRetryWorker, getBlockchainRetryQueue } from './workers/blockchain.worker.js';
 import { startForageTriggerWorker } from './workers/forage-trigger.worker.js';
+import { startSatelliteWorker, getSatelliteQueue } from './workers/satellite.worker.js';
 
 const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds forced exit
 
@@ -42,6 +43,7 @@ try {
   startNotificationWorker();
   startBlockchainRetryWorker();
   startForageTriggerWorker();
+  startSatelliteWorker();
   logger.info('Background workers started');
 } catch (error) {
   logger.warn('Workers failed to start', { message: error.message });
@@ -86,10 +88,12 @@ async function shutdown(signal) {
     const payoutQueue = getPayoutQueue();
     const notificationQueue = getNotificationQueue();
     const blockchainRetryQueue = getBlockchainRetryQueue();
+    const satelliteQueue = getSatelliteQueue();
     const closePromises = [];
     if (payoutQueue) closePromises.push(payoutQueue.close());
     if (notificationQueue) closePromises.push(notificationQueue.close());
     if (blockchainRetryQueue) closePromises.push(blockchainRetryQueue.close());
+    if (satelliteQueue) closePromises.push(satelliteQueue.close());
     if (closePromises.length > 0) {
       await Promise.all(closePromises);
       logger.info('Bull queues closed');
