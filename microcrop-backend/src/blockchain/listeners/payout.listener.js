@@ -73,6 +73,18 @@ async function handleDamageReportEvent(event) {
     damageBasisPoints: Number(damagePercentage),
   });
 
+  // Async fraud verification — non-blocking, must never delay payouts
+  import('../../services/fraud.service.js').then(({ default: fraudService }) => {
+    fraudService.verifyDamageAssessment(assessment.id)
+      .catch(err => logger.warn('Fraud verification skipped', {
+        assessmentId: assessment.id,
+        error: err.message,
+      }));
+  }).catch(err => logger.warn('Fraud service import failed', {
+    assessmentId: assessment.id,
+    error: err.message,
+  }));
+
   // If damage percentage meets threshold, create payout
   if (damagePercent >= DAMAGE_THRESHOLD) {
     // Use the payoutAmount from the event (already calculated on-chain)
