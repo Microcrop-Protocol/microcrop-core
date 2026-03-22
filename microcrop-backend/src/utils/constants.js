@@ -121,3 +121,14 @@ export const NDVI_THRESHOLDS = {
 
 export const FRAUD_NDVI_MISMATCH_THRESHOLD = 0.3;
 export const FRAUD_CONFIDENCE_THRESHOLD = 0.7;
+
+// Anomaly detection — number of std deviations below baseline to flag as anomaly
+export const ANOMALY_SIGMA_THRESHOLD = 2;
+
+// Minimum baseline stdDev floor to avoid division-by-zero or spurious anomalies
+export const MIN_BASELINE_STDDEV = 0.05;
+
+// Satellite monitoring
+export const SATELLITE_RATE_LIMIT_DELAY_MS = 1000;
+export const MAX_NDVI_QUERY_DAYS = 365;
+export const MONITORING_CONCURRENCY = 5;

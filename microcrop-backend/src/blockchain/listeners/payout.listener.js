@@ -9,6 +9,7 @@ let pollingInterval = null;
 let lastProcessedBlock = null;
 const POLL_INTERVAL_MS = 15000; // Poll every 15 seconds
 const GAP_WARNING_THRESHOLD = 5000; // ~2.5 hours on Base
+const FRAUD_VERIFICATION_TIMEOUT_MS = 30000; // 30 seconds
 
 // Use payout receiver address as the sync state key
 const PAYOUT_RECEIVER_ADDRESS = env.isDev
@@ -42,6 +43,19 @@ async function handleDamageReportEvent(event) {
     blockNumber: event.blockNumber,
   });
 
+  // --- Idempotency: skip if DamageAssessment with this txHash already exists ---
+  const existingAssessment = await prisma.damageAssessment.findFirst({
+    where: { txHash: event.transactionHash },
+  });
+
+  if (existingAssessment) {
+    logger.info('DamageReportReceived already processed (idempotent skip)', {
+      txHash: event.transactionHash,
+      existingAssessmentId: existingAssessment.id,
+    });
+    return;
+  }
+
   const policy = await prisma.policy.findFirst({
     where: { onChainPolicyId: policyId.toString() },
     include: { farmer: true, organization: true },
@@ -73,20 +87,44 @@ async function handleDamageReportEvent(event) {
     damageBasisPoints: Number(damagePercentage),
   });
 
-  // Async fraud verification — non-blocking, must never delay payouts
-  import('../../services/fraud.service.js').then(({ default: fraudService }) => {
-    fraudService.verifyDamageAssessment(assessment.id)
-      .catch(err => logger.warn('Fraud verification skipped', {
-        assessmentId: assessment.id,
-        error: err.message,
-      }));
-  }).catch(err => logger.warn('Fraud service import failed', {
-    assessmentId: assessment.id,
-    error: err.message,
-  }));
+  // Async fraud verification — non-blocking, must NEVER affect payout flow.
+  // Wrapped with Promise.race to enforce a 30s timeout and prevent hanging.
+  const fraudTimeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Fraud verification timed out after 30s')), FRAUD_VERIFICATION_TIMEOUT_MS)
+  );
+
+  Promise.race([
+    import('../../services/fraud.service.js').then(({ default: fraudService }) =>
+      fraudService.verifyDamageAssessment(assessment.id)
+    ),
+    fraudTimeout,
+  ]).catch(err => {
+    // Errors in fraud verification must never affect the payout flow
+    logger.warn('Fraud verification did not complete', {
+      assessmentId: assessment.id,
+      error: err.message,
+    });
+  });
 
   // If damage percentage meets threshold, create payout
   if (damagePercent >= DAMAGE_THRESHOLD) {
+    // --- Idempotency: check if a payout already exists for this policy with PENDING/PROCESSING ---
+    const existingPayout = await prisma.payout.findFirst({
+      where: {
+        policyId: policy.id,
+        status: { in: ['PENDING', 'PROCESSING'] },
+      },
+    });
+
+    if (existingPayout) {
+      logger.info('Payout already exists for policy (idempotent skip)', {
+        existingPayoutId: existingPayout.id,
+        policyId: policy.id,
+        status: existingPayout.status,
+      });
+      return;
+    }
+
     // Use the payoutAmount from the event (already calculated on-chain)
     const payoutAmountUSDC = Number(payoutAmount) / 1e6; // Convert from USDC decimals
 
@@ -127,6 +165,19 @@ async function handlePayoutInitiatedEvent(event) {
     amount: amount.toString(),
     blockNumber: event.blockNumber,
   });
+
+  // --- Idempotency: check if this txHash is already recorded on a payout ---
+  const alreadyRecorded = await prisma.payout.findFirst({
+    where: { txHash: event.transactionHash },
+  });
+
+  if (alreadyRecorded) {
+    logger.info('PayoutInitiated already processed (idempotent skip)', {
+      txHash: event.transactionHash,
+      payoutId: alreadyRecorded.id,
+    });
+    return;
+  }
 
   const policy = await prisma.policy.findFirst({
     where: { onChainPolicyId: policyId.toString() },

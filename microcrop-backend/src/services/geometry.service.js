@@ -55,6 +55,20 @@ function validateGeoJSON(geojson) {
     }
   }
 
+  // Check for self-intersecting polygon using turf's kinks()
+  try {
+    const poly = turf.polygon(geojson.coordinates);
+    const selfIntersections = turf.kinks(poly);
+    if (selfIntersections.features.length > 0) {
+      return {
+        valid: false,
+        error: `Polygon is self-intersecting (${selfIntersections.features.length} intersection(s) found)`,
+      };
+    }
+  } catch (err) {
+    return { valid: false, error: `Failed to validate polygon topology: ${err.message}` };
+  }
+
   return { valid: true };
 }
 
@@ -97,9 +111,18 @@ function pointToPolygon(lat, lon, radiusMeters = 500) {
 }
 
 // ---------------------------------------------------------------------------
-// checkOverlaps — Find overlapping plots within an organization
+// bboxOverlaps — Cheap check: do two [minLon, minLat, maxLon, maxLat] overlap?
 // ---------------------------------------------------------------------------
-async function checkOverlaps(organizationId, boundary, excludePlotId = null) {
+function bboxOverlaps(a, b) {
+  // a and b are [minLon, minLat, maxLon, maxLat]
+  return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+}
+
+// ---------------------------------------------------------------------------
+// checkOverlaps — Find overlapping plots within an organization
+// Optimized: bbox pre-filter before full polygon intersection, with limit.
+// ---------------------------------------------------------------------------
+async function checkOverlaps(organizationId, boundary, excludePlotId = null, { limit = 10 } = {}) {
   try {
     // Import prisma lazily to avoid circular dependency
     const { default: prisma } = await import('../config/database.js');
@@ -123,12 +146,23 @@ async function checkOverlaps(organizationId, boundary, excludePlotId = null) {
     });
 
     const inputPolygon = turf.polygon(boundary.coordinates);
+    const inputBbox = turf.bbox(inputPolygon);
     const overlapping = [];
 
     for (const plot of plots) {
+      // Stop early once we hit the overlap limit
+      if (overlapping.length >= limit) break;
+
       try {
         const plotPolygon = turf.polygon(plot.boundary.coordinates);
 
+        // Cheap bbox pre-filter: skip if bounding boxes don't overlap
+        const plotBbox = turf.bbox(plotPolygon);
+        if (!bboxOverlaps(inputBbox, plotBbox)) {
+          continue;
+        }
+
+        // Full polygon intersection check (only on bbox-filtered candidates)
         if (turf.booleanIntersects(inputPolygon, plotPolygon)) {
           let overlapArea = 0;
           try {

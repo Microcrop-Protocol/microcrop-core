@@ -1,9 +1,10 @@
 import prisma from '../config/database.js';
+import redis from '../config/redis.js';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
 import satelliteService from './satellite.service.js';
 import { addNotificationJob } from '../workers/notification.worker.js';
-import { NDVI_THRESHOLDS } from '../utils/constants.js';
+import { NDVI_THRESHOLDS, ANOMALY_SIGMA_THRESHOLD, MIN_BASELINE_STDDEV } from '../utils/constants.js';
 
 // ---------------------------------------------------------------------------
 // Helper: getDayOfYear
@@ -49,8 +50,29 @@ async function monitorAllActivePlots() {
 
 // ---------------------------------------------------------------------------
 // monitorPlot — Fetch NDVI, store reading, classify health, detect anomalies
+//
+// Uses a Redis lock to prevent concurrent monitoring of the same plot.
+// If the plot was monitored within the last hour, the call is skipped.
 // ---------------------------------------------------------------------------
 async function monitorPlot(plotId, organizationId) {
+  // --- Redis-based dedup lock (1 hour TTL) ---
+  const lockKey = `satellite:monitor:${plotId}`;
+  const LOCK_TTL_SECONDS = 3600; // 1 hour
+
+  try {
+    const acquired = await redis.set(lockKey, Date.now().toString(), 'EX', LOCK_TTL_SECONDS, 'NX');
+    if (!acquired) {
+      logger.debug('Satellite monitor: skipping plot (recently monitored)', { plotId });
+      return { plotId, ndvi: null, health: 'SKIPPED', anomaly: false };
+    }
+  } catch (err) {
+    // If Redis is down, proceed anyway (fail-open) to avoid blocking monitoring
+    logger.warn('Satellite monitor: Redis lock check failed, proceeding', {
+      plotId,
+      error: err.message,
+    });
+  }
+
   const plot = await prisma.plot.findUnique({
     where: { id: plotId },
     include: {
@@ -124,7 +146,7 @@ async function monitorPlot(plotId, organizationId) {
             satelliteDamage,
             ndviDamage: deviationPercent,
             damagePercent: Math.round(satelliteDamage),
-            source: 'CRE',
+            source: 'SATELLITE',
             triggered: true,
             triggerDate: new Date(),
           },
@@ -199,12 +221,17 @@ async function computeAllBaselines() {
 
 // ---------------------------------------------------------------------------
 // detectAnomaly — Statistical anomaly detection for a single plot/reading
+//
+// Uses ANOMALY_SIGMA_THRESHOLD from constants (default 2).
+// Applies a minimum stdDev floor (MIN_BASELINE_STDDEV) to avoid
+// false positives when historical variance is near-zero.
+// Uses absolute value of deviation to catch both directions.
 // ---------------------------------------------------------------------------
 async function detectAnomaly(plotId, currentNdvi, captureDate) {
   const dayOfYear = getDayOfYear(new Date(captureDate));
   const baseline = await satelliteService.getBaseline(plotId, dayOfYear);
 
-  if (!baseline || baseline.baselineStdDev === 0) {
+  if (!baseline) {
     return {
       isAnomaly: false,
       deviationSigma: 0,
@@ -213,20 +240,24 @@ async function detectAnomaly(plotId, currentNdvi, captureDate) {
     };
   }
 
-  const { baselineMean, baselineStdDev } = baseline;
+  const { baselineMean } = baseline;
+  // Apply minimum stdDev floor to prevent division-by-near-zero
+  const baselineStdDev = Math.max(baseline.baselineStdDev, MIN_BASELINE_STDDEV);
 
-  const isAnomaly = currentNdvi < baselineMean - 2 * baselineStdDev;
+  // Use absolute deviation — anomalies can be in either direction
   const deviationSigma = parseFloat(
-    ((baselineMean - currentNdvi) / baselineStdDev).toFixed(2)
+    (Math.abs(baselineMean - currentNdvi) / baselineStdDev).toFixed(2)
   );
 
-  const low = parseFloat((baselineMean - 2 * baselineStdDev).toFixed(3));
-  const high = parseFloat((baselineMean + 2 * baselineStdDev).toFixed(3));
+  const isAnomaly = deviationSigma >= ANOMALY_SIGMA_THRESHOLD;
+
+  const low = parseFloat((baselineMean - ANOMALY_SIGMA_THRESHOLD * baselineStdDev).toFixed(3));
+  const high = parseFloat((baselineMean + ANOMALY_SIGMA_THRESHOLD * baselineStdDev).toFixed(3));
 
   let severity = null;
   if (deviationSigma > 3) {
     severity = 'SEVERE';
-  } else if (deviationSigma > 2) {
+  } else if (deviationSigma >= ANOMALY_SIGMA_THRESHOLD) {
     severity = 'MODERATE';
   }
 

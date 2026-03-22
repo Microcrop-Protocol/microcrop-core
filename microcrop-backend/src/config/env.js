@@ -112,7 +112,7 @@ export const env = {
   // Satellite monitoring
   satelliteMonitoringEnabled: optional('SATELLITE_MONITORING_ENABLED', 'true') === 'true',
   satelliteMonitoringCron: optional('SATELLITE_MONITORING_CRON', '0 3 */5 * *'),
-  ndviLookbackDays: parseInt(optional('NDVI_LOOKBACK_DAYS', '7'), 10),
+  ndviLookbackDays: parseInt(optional('NDVI_LOOKBACK_DAYS', '90'), 10),
   ndviBaselineYears: parseInt(optional('NDVI_BASELINE_YEARS', '3'), 10),
 };
 

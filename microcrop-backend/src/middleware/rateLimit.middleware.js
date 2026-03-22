@@ -79,3 +79,9 @@ export const webhookLimiter = createLimiter({
   max: 60,
   keyPrefix: 'webhook',
 });
+
+export const internalLimiter = createLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120,
+  keyPrefix: 'internal',
+});

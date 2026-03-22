@@ -183,6 +183,7 @@ model Farmer {
   herds        Herd[]
   policies     Policy[]
   transactions Transaction[]
+  fraudFlags   FraudFlag[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -508,6 +509,7 @@ model Policy {
   // Relations
   payouts           Payout[]
   damageAssessments DamageAssessment[]
+  fraudFlags        FraudFlag[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -819,6 +821,8 @@ model SatelliteData {
   @@unique([plotId, captureDate, source])
   @@index([plotId, captureDate(sort: Desc)])
   @@index([organizationId, captureDate(sort: Desc)])
+  @@index([captureDate])
+  @@index([organizationId])
 }
 
 // ============================================
@@ -1062,6 +1066,7 @@ model NDVIBaseline {
 
   @@unique([plotId, periodStart, periodEnd])
   @@index([plotId])
+  @@index([plotId, periodStart])
 }
 
 // ============================================
@@ -1075,7 +1080,9 @@ model FraudFlag {
   farmerId       String?
   organizationId String
 
-  plot Plot? @relation(fields: [plotId], references: [id], onDelete: SetNull)
+  policy Policy? @relation(fields: [policyId], references: [id])
+  plot   Plot?   @relation(fields: [plotId], references: [id], onDelete: SetNull)
+  farmer Farmer? @relation(fields: [farmerId], references: [id])
 
   type        FraudFlagType
   severity    FraudSeverity  @default(MEDIUM)
@@ -1084,7 +1091,7 @@ model FraudFlag {
   claimedDamage   Decimal? @db.Decimal(5, 2)
   satelliteNdvi   Decimal? @db.Decimal(4, 3)
   baselineNdvi    Decimal? @db.Decimal(4, 3)
-  confidenceScore Decimal  @db.Decimal(3, 2)
+  confidenceScore Decimal  @db.Decimal(5, 4)
 
   status     FraudFlagStatus @default(OPEN)
   resolvedBy String?

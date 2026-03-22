@@ -27,8 +27,21 @@ export function startSatelliteWorker() {
     const { plotId, organizationId } = job.data;
     logger.info('Processing satellite monitor-plot job', { plotId, organizationId });
 
-    const result = await satelliteMonitoringService.monitorPlot(plotId, organizationId);
-    return result;
+    try {
+      const result = await satelliteMonitoringService.monitorPlot(plotId, organizationId);
+      return result;
+    } catch (error) {
+      // Log with full context so failed plots are easy to find in logs
+      logger.error('monitor-plot job failed for plot', {
+        plotId,
+        organizationId,
+        jobId: job.id,
+        attemptsMade: job.attemptsMade,
+        error: error.message,
+        stack: error.stack,
+      });
+      throw error; // Re-throw so Bull marks the job as failed and retries
+    }
   });
 
   satelliteQueue.process('monitor-batch', 1, async (job) => {
@@ -77,12 +90,18 @@ export function startSatelliteWorker() {
   });
 
   satelliteQueue.on('failed', (job, err) => {
-    logger.error('Satellite job failed', {
+    const maxAttempts = job.opts?.attempts || 3;
+    const isFinalAttempt = job.attemptsMade >= maxAttempts;
+
+    logger[isFinalAttempt ? 'error' : 'warn']('Satellite job failed', {
       jobId: job.id,
       name: job.name,
       plotId: job.data?.plotId,
+      organizationId: job.data?.organizationId,
       error: err.message,
       attemptsMade: job.attemptsMade,
+      maxAttempts,
+      isFinalAttempt,
     });
   });
 

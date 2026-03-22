@@ -2,17 +2,79 @@ import axios from 'axios';
 import prisma from '../config/database.js';
 import { env } from '../config/env.js';
 import logger from '../utils/logger.js';
-import { NDVI_THRESHOLDS } from '../utils/constants.js';
+import {
+  NDVI_THRESHOLDS,
+  SATELLITE_RATE_LIMIT_DELAY_MS,
+  MAX_NDVI_QUERY_DAYS,
+  ANOMALY_SIGMA_THRESHOLD,
+  MIN_BASELINE_STDDEV,
+} from '../utils/constants.js';
 
 // ---------------------------------------------------------------------------
-// Module-level token cache
+// Module-level token cache + mutex for OAuth2 race condition prevention
 // ---------------------------------------------------------------------------
 let cachedToken = null;
 let tokenExpiresAt = 0;
+let tokenPromise = null;
+
+// ---------------------------------------------------------------------------
+// Retryable HTTP status codes (transient errors)
+// ---------------------------------------------------------------------------
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
+const MAX_RETRIES = 3;
+
+// ---------------------------------------------------------------------------
+// sleep helper
+// ---------------------------------------------------------------------------
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// retryWithBackoff — Generic retry wrapper for transient errors
+// ---------------------------------------------------------------------------
+async function retryWithBackoff(fn, { label = 'request', retries = MAX_RETRIES } = {}) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const status = error.response?.status;
+      const isNetworkError = !error.response && (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN');
+      const isRetryable = isNetworkError || (status && RETRYABLE_STATUS_CODES.has(status));
+
+      if (!isRetryable || attempt === retries) {
+        throw error;
+      }
+
+      // For 429, use Retry-After header if available, else use rate limit delay
+      let delayMs;
+      if (status === 429) {
+        const retryAfter = error.response?.headers?.['retry-after'];
+        delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : SATELLITE_RATE_LIMIT_DELAY_MS;
+      } else {
+        // Exponential backoff: 1s, 2s, 4s
+        delayMs = Math.pow(2, attempt) * 1000;
+      }
+
+      logger.warn(`${label} failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${delayMs}ms`, {
+        status,
+        error: error.message,
+      });
+
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError;
+}
 
 // ---------------------------------------------------------------------------
 // SCL cloud-masked NDVI evalscript (from livestock CRE)
 // Masks: cloud shadow (3), water (6), cloud medium (8), cloud high (9), snow (11)
+// These SCL values match microcrop-cre/my-project/livestock/main.ts exactly.
 // ---------------------------------------------------------------------------
 const EVALSCRIPT = `//VERSION=3
 function setup() {
@@ -31,7 +93,8 @@ function evaluatePixel(sample) {
 }`;
 
 // ---------------------------------------------------------------------------
-// getAccessToken — OAuth2 token with caching & 5-min refresh buffer
+// getAccessToken — OAuth2 token with caching, 5-min buffer, and mutex lock
+// Prevents concurrent token refreshes via a shared promise (tokenPromise).
 // ---------------------------------------------------------------------------
 async function getAccessToken() {
   if (!env.sentinelClientId || !env.sentinelClientSecret) {
@@ -39,13 +102,23 @@ async function getAccessToken() {
     return null;
   }
 
+  // If a refresh is already in progress, wait for it
+  if (tokenPromise) return tokenPromise;
+
   // Return cached token if still valid (5 min buffer)
-  const now = Date.now();
-  if (cachedToken && tokenExpiresAt - now > 5 * 60 * 1000) {
+  if (cachedToken && tokenExpiresAt > Date.now() + 300000) {
     return cachedToken;
   }
 
+  tokenPromise = refreshToken().finally(() => {
+    tokenPromise = null;
+  });
+  return tokenPromise;
+}
+
+async function refreshToken() {
   try {
+    const now = Date.now();
     const response = await axios.post(
       env.sentinelOAuthUrl,
       new URLSearchParams({
@@ -116,6 +189,27 @@ function buildBounds(queryGeom) {
 }
 
 // ---------------------------------------------------------------------------
+// validateStatisticalResponse — Validate Sentinel Hub Statistical API response
+// ---------------------------------------------------------------------------
+function validateStatisticalResponse(response) {
+  if (!response || !response.data) {
+    return { valid: false, error: 'Response missing data field' };
+  }
+
+  const data = response.data;
+
+  if (typeof data !== 'object') {
+    return { valid: false, error: `Unexpected response type: ${typeof data}` };
+  }
+
+  if (!Array.isArray(data.data)) {
+    return { valid: false, error: 'Response missing data.data array' };
+  }
+
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
 // parseStatisticalResponse — Extract stats from Sentinel Hub response
 // ---------------------------------------------------------------------------
 function parseStatisticalResponse(data) {
@@ -151,6 +245,7 @@ function parseStatisticalResponse(data) {
 
 // ---------------------------------------------------------------------------
 // fetchNDVI — Core single-period NDVI fetch via Statistical API
+// Includes response validation and retry with exponential backoff.
 // ---------------------------------------------------------------------------
 async function fetchNDVI(plot, fromDate, toDate) {
   const token = await getAccessToken();
@@ -192,17 +287,27 @@ async function fetchNDVI(plot, fromDate, toDate) {
   };
 
   try {
-    const response = await axios.post(
-      `${env.sentinelApiUrl}/statistical`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
+    const response = await retryWithBackoff(
+      () =>
+        axios.post(`${env.sentinelApiUrl}/statistical`, payload, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        }),
+      { label: `fetchNDVI(plot=${plot.id})` }
     );
+
+    // Validate response shape before accessing nested fields
+    const validation = validateStatisticalResponse(response);
+    if (!validation.valid) {
+      logger.error('Sentinel Hub returned malformed response', {
+        plotId: plot.id,
+        error: validation.error,
+      });
+      return null;
+    }
 
     const parsed = parseStatisticalResponse(response.data);
     if (!parsed || parsed.length === 0) {
@@ -237,8 +342,36 @@ async function fetchNDVI(plot, fromDate, toDate) {
 
 // ---------------------------------------------------------------------------
 // fetchNDVITimeSeries — Multi-interval NDVI fetch
+// Validates date range against MAX_NDVI_QUERY_DAYS and retries on transient errors.
 // ---------------------------------------------------------------------------
 async function fetchNDVITimeSeries(plot, fromDate, toDate, intervalDays = 5) {
+  // Validate date range does not exceed maximum
+  const from = new Date(fromDate);
+  const to = new Date(toDate);
+  const diffDays = Math.ceil((to - from) / (1000 * 60 * 60 * 24));
+
+  if (diffDays > MAX_NDVI_QUERY_DAYS) {
+    logger.error('NDVI time series date range exceeds maximum', {
+      plotId: plot.id,
+      fromDate,
+      toDate,
+      diffDays,
+      maxDays: MAX_NDVI_QUERY_DAYS,
+    });
+    throw new Error(
+      `Date range of ${diffDays} days exceeds maximum of ${MAX_NDVI_QUERY_DAYS} days`
+    );
+  }
+
+  if (diffDays <= 0) {
+    logger.error('NDVI time series has invalid date range', {
+      plotId: plot.id,
+      fromDate,
+      toDate,
+    });
+    throw new Error('fromDate must be before toDate');
+  }
+
   const token = await getAccessToken();
   if (!token) {
     logger.warn('Sentinel credentials not configured — returning null for time series');
@@ -278,17 +411,27 @@ async function fetchNDVITimeSeries(plot, fromDate, toDate, intervalDays = 5) {
   };
 
   try {
-    const response = await axios.post(
-      `${env.sentinelApiUrl}/statistical`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
+    const response = await retryWithBackoff(
+      () =>
+        axios.post(`${env.sentinelApiUrl}/statistical`, payload, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        }),
+      { label: `fetchNDVITimeSeries(plot=${plot.id})` }
     );
+
+    // Validate response shape before accessing nested fields
+    const validation = validateStatisticalResponse(response);
+    if (!validation.valid) {
+      logger.error('Sentinel Hub returned malformed time series response', {
+        plotId: plot.id,
+        error: validation.error,
+      });
+      return [];
+    }
 
     const parsed = parseStatisticalResponse(response.data);
     if (!parsed) {
@@ -408,7 +551,36 @@ async function computeBaseline(plotId, dayOfYear, windowDays = 16) {
       return null;
     }
 
-    const values = matching.map((r) => parseFloat(r.ndvi)).sort((a, b) => a - b);
+    let values = matching.map((r) => parseFloat(r.ndvi)).sort((a, b) => a - b);
+
+    // --- Outlier filtering: remove readings > 3 stddev from the mean ---
+    // This prevents cloud-contaminated or sensor-error readings from skewing baselines.
+    if (values.length >= 5) {
+      const rawN = values.length;
+      const rawSum = values.reduce((acc, v) => acc + v, 0);
+      const rawMean = rawSum / rawN;
+      const rawVariance = values.reduce((acc, v) => acc + (v - rawMean) ** 2, 0) / rawN;
+      const rawStdDev = Math.sqrt(rawVariance);
+
+      if (rawStdDev > 0) {
+        const filtered = values.filter(
+          (v) => Math.abs(v - rawMean) <= 3 * rawStdDev
+        );
+        if (filtered.length > 0) {
+          const removed = rawN - filtered.length;
+          if (removed > 0) {
+            logger.debug('Baseline outlier filtering', {
+              plotId,
+              dayOfYear,
+              rawCount: rawN,
+              removedCount: removed,
+            });
+          }
+          values = filtered;
+        }
+      }
+    }
+
     const n = values.length;
     const sum = values.reduce((acc, v) => acc + v, 0);
     const baselineMean = parseFloat((sum / n).toFixed(3));
@@ -537,11 +709,13 @@ function classifyHealth(ndvi, baseline) {
   let deviation = null;
   let isAnomaly = false;
 
-  if (baseline && baseline.baselineStdDev > 0) {
+  if (baseline) {
+    // Apply minimum stdDev floor to prevent false positives from near-zero variance
+    const effectiveStdDev = Math.max(baseline.baselineStdDev, MIN_BASELINE_STDDEV);
     deviation = parseFloat(
-      ((ndvi - baseline.baselineMean) / baseline.baselineStdDev).toFixed(2)
+      ((ndvi - baseline.baselineMean) / effectiveStdDev).toFixed(2)
     );
-    isAnomaly = ndvi < baseline.baselineMean - 2 * baseline.baselineStdDev;
+    isAnomaly = ndvi < baseline.baselineMean - ANOMALY_SIGMA_THRESHOLD * effectiveStdDev;
   }
 
   return { status, ndvi, deviation, isAnomaly };

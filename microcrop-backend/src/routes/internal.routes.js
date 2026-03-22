@@ -7,6 +7,7 @@ import { invitationController } from '../controllers/invitation.controller.js';
 import { checkPendingPayouts } from '../workers/payout.worker.js';
 import forageTriggerService from '../services/forage-trigger.service.js';
 import { addForageTriggerJob } from '../workers/forage-trigger.worker.js';
+import { internalLimiter } from '../middleware/rateLimit.middleware.js';
 
 const router = Router();
 
@@ -258,7 +259,7 @@ router.get('/insurance-units', async (_req, res, next) => {
  * Upsert satellite NDVI data for a plot.
  * Called by CRE when new satellite imagery is processed.
  */
-router.post('/satellite-data', async (req, res, next) => {
+router.post('/satellite-data', internalLimiter, async (req, res, next) => {
   try {
     const { plotId, ndvi, ndviMin, ndviMax, ndviStdDev, captureDate, cloudCover, source } = req.body;
 

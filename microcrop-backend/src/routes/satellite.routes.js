@@ -149,11 +149,9 @@ router.get(
         throw new NotFoundError('Plot not found');
       }
 
-      // Default range: last 30 days
-      const to = req.query.to ? new Date(req.query.to) : new Date();
-      const from = req.query.from
-        ? new Date(req.query.from)
-        : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+      // Dates default to last 90 days via validator schema
+      const from = new Date(req.query.from);
+      const to = new Date(req.query.to);
 
       const readings = await prisma.satelliteData.findMany({
         where: {
@@ -330,68 +328,89 @@ router.post(
  * GET /monitoring
  * Org-wide satellite monitoring dashboard.
  */
-router.get('/monitoring', async (req, res, next) => {
-  try {
-    const orgId = req.organization.id;
+router.get(
+  '/monitoring',
+  validate(paginationQuerySchema, 'query'),
+  async (req, res, next) => {
+    try {
+      const orgId = req.organization.id;
+      const { skip, take, page, limit } = paginate(req.query.page, req.query.limit);
 
-    // Get all plots for this org that have satellite data
-    const plots = await prisma.plot.findMany({
-      where: { organizationId: orgId },
-      include: {
-        satelliteData: {
-          orderBy: { captureDate: 'desc' },
-          take: 1,
+      const plotWhere = { organizationId: orgId };
+
+      // Get paginated plots with their latest satellite data
+      const [plots, totalPlots] = await Promise.all([
+        prisma.plot.findMany({
+          where: plotWhere,
+          skip,
+          take,
+          include: {
+            satelliteData: {
+              orderBy: { captureDate: 'desc' },
+              take: 1,
+            },
+          },
+        }),
+        prisma.plot.count({ where: plotWhere }),
+      ]);
+
+      // Classify each plot by health status
+      const healthCounts = { EXCELLENT: 0, GOOD: 0, MODERATE: 0, POOR: 0, CRITICAL: 0, UNKNOWN: 0 };
+      let totalNdvi = 0;
+      let ndviCount = 0;
+
+      for (const plot of plots) {
+        if (!plot.satelliteData || plot.satelliteData.length === 0) {
+          healthCounts.UNKNOWN++;
+          continue;
+        }
+
+        const ndvi = parseFloat(plot.satelliteData[0].ndvi);
+        if (isNaN(ndvi)) {
+          healthCounts.UNKNOWN++;
+          continue;
+        }
+
+        totalNdvi += ndvi;
+        ndviCount++;
+
+        // Simple classification without baseline for dashboard overview
+        const health = satelliteService.classifyHealth(ndvi, null);
+        healthCounts[health.status] = (healthCounts[health.status] || 0) + 1;
+      }
+
+      // Count recent anomalies (CRE damage assessments in last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const anomalyCount = await prisma.damageAssessment.count({
+        where: {
+          organizationId: orgId,
+          source: 'CRE',
+          createdAt: { gte: thirtyDaysAgo },
         },
-      },
-    });
+      });
 
-    // Classify each plot by health status
-    const healthCounts = { EXCELLENT: 0, GOOD: 0, MODERATE: 0, POOR: 0, CRITICAL: 0, UNKNOWN: 0 };
-    let totalNdvi = 0;
-    let ndviCount = 0;
-
-    for (const plot of plots) {
-      if (!plot.satelliteData || plot.satelliteData.length === 0) {
-        healthCounts.UNKNOWN++;
-        continue;
-      }
-
-      const ndvi = parseFloat(plot.satelliteData[0].ndvi);
-      if (isNaN(ndvi)) {
-        healthCounts.UNKNOWN++;
-        continue;
-      }
-
-      totalNdvi += ndvi;
-      ndviCount++;
-
-      // Simple classification without baseline for dashboard overview
-      const health = satelliteService.classifyHealth(ndvi, null);
-      healthCounts[health.status] = (healthCounts[health.status] || 0) + 1;
+      res.status(200).json({
+        success: true,
+        data: {
+          totalPlots,
+          healthDistribution: healthCounts,
+          averageNdvi: ndviCount > 0 ? parseFloat((totalNdvi / ndviCount).toFixed(3)) : null,
+          recentAnomalies: anomalyCount,
+        },
+        pagination: {
+          page,
+          limit,
+          total: totalPlots,
+          totalPages: Math.ceil(totalPlots / limit),
+        },
+      });
+    } catch (error) {
+      next(error);
     }
-
-    // Count recent anomalies (CRE damage assessments in last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const anomalyCount = await prisma.damageAssessment.count({
-      where: {
-        organizationId: orgId,
-        source: 'CRE',
-        createdAt: { gte: thirtyDaysAgo },
-      },
-    });
-
-    res.status(200).json(formatResponse({
-      totalPlots: plots.length,
-      healthDistribution: healthCounts,
-      averageNdvi: ndviCount > 0 ? parseFloat((totalNdvi / ndviCount).toFixed(3)) : null,
-      recentAnomalies: anomalyCount,
-    }));
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 /**
  * GET /monitoring/anomalies
