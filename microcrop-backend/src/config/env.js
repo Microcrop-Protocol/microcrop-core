@@ -106,8 +106,8 @@ export const env = {
   // Sentinel Hub (backend satellite service)
   sentinelClientId: optional('SENTINEL_CLIENT_ID', ''),
   sentinelClientSecret: optional('SENTINEL_CLIENT_SECRET', ''),
-  sentinelApiUrl: optional('SENTINEL_API_URL', 'https://services.sentinel-hub.com/api/v1'),
-  sentinelOAuthUrl: optional('SENTINEL_OAUTH_URL', 'https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token'),
+  sentinelApiUrl: optional('SENTINEL_API_URL', 'https://sh.dataspace.copernicus.eu/api/v1'),
+  sentinelOAuthUrl: optional('SENTINEL_OAUTH_URL', 'https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token'),
 
   // Satellite monitoring
   satelliteMonitoringEnabled: optional('SATELLITE_MONITORING_ENABLED', 'true') === 'true',

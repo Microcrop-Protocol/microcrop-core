@@ -589,6 +589,7 @@ enum DamageSource {
   ON_CHAIN
   MANUAL
   CRE
+  SATELLITE
 }
 
 // ============================================
@@ -1128,4 +1129,7 @@ enum FraudFlagStatus {
   CONFIRMED_FRAUD
   CLEARED
   DISMISSED
+  RESOLVED_FALSE_POSITIVE
+  RESOLVED_CONFIRMED
+  RESOLVED_INCONCLUSIVE
 }
