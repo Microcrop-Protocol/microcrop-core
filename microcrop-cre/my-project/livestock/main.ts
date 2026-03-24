@@ -37,7 +37,7 @@ function toBase64(str: string): string {
 // OAuth Token Endpoint
 // ---------------------------------------------------------------------------
 const SENTINEL_HUB_OAUTH_URL =
-  "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
+  "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
 
 // ---------------------------------------------------------------------------
 // NDVI Evalscript — Sentinel-2 L2A for area-averaged forage NDVI
