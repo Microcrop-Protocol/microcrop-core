@@ -1,6 +1,6 @@
 {
   "schedule": "0 6 1,17 * *",
-  "backendApiUrl": "https://api.microcrop.app",
+  "backendApiUrl": "https://app.microcrop.app",
   "sentinelApiUrl": "https://sh.dataspace.copernicus.eu/api/v1",
   "ndviLookbackDays": 16
 }

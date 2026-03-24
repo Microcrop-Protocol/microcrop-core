@@ -1,6 +1,6 @@
 {
   "schedule": "0 0 * * *",
-  "backendApiUrl": "https://api.microcrop.app",
+  "backendApiUrl": "https://app.microcrop.app",
   "weatherXmApiUrl": "https://pro.weatherxm.com/api/v1",
   "satelliteProvider": "planet",
   "planetApiUrl": "https://sh.dataspace.copernicus.eu/api/v1",

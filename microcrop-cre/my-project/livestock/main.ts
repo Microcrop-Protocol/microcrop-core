@@ -220,6 +220,10 @@ function fetchAreaNDVI(
     aggregation: {
       timeRange: { from: `${fromDate}T00:00:00Z`, to: `${toDate}T23:59:59Z` },
       aggregationInterval: { of: `P${lookbackDays}D` },
+      // Resolution in degrees (~1km at equator) to stay within CDSE 1500m/pixel limit
+      // for large county-level bounding boxes (e.g. Turkana 2.5°×4.0°)
+      resx: 0.01,
+      resy: 0.01,
       evalscript: FORAGE_NDVI_EVALSCRIPT,
     },
     output: {
