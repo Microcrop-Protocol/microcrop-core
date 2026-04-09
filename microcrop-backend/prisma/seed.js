@@ -13,6 +13,21 @@ function generateApiSecret() {
 }
 
 async function main() {
+  // Production guard: never seed production database
+  if (process.env.NODE_ENV === 'production') {
+    console.error('ERROR: Seed script cannot run in production environment'); // eslint-disable-line no-console
+    process.exit(1);
+  }
+
+  // Secondary guard: detect cloud-hosted database URLs
+  const dbUrl = process.env.DATABASE_URL || '';
+  const productionIndicators = ['amazonaws.com', 'supabase.co', 'neon.tech', '.cloud'];
+  const isCloudDb = productionIndicators.some((indicator) => dbUrl.includes(indicator));
+  if (isCloudDb && process.env.SEED_FORCE !== 'true') {
+    console.error('ERROR: DATABASE_URL appears to be a production database. Set SEED_FORCE=true to proceed.'); // eslint-disable-line no-console
+    process.exit(1);
+  }
+
   // Clean existing data
   await prisma.dailyPlatformStats.deleteMany();
   await prisma.dailyOrganizationStats.deleteMany();
@@ -75,10 +90,10 @@ async function main() {
   // Create Platform Admin
   const platformAdmin = await prisma.user.create({
     data: {
-      email: 'timbwamoses83@gmail.com',
+      email: process.env.PLATFORM_ADMIN_EMAIL || 'admin@microcrop.com',
       password: hashedPassword,
-      firstName: 'Moses',
-      lastName: 'Timbwa',
+      firstName: 'Platform',
+      lastName: 'Admin',
       role: 'PLATFORM_ADMIN',
       isActive: true,
       emailVerified: true,
@@ -210,11 +225,7 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(`  Farmers: ${farmer1.firstName}, ${farmer2.firstName}, ${farmer3.firstName}`);
   // eslint-disable-next-line no-console
-  console.log(`  Kiambu API Key: ${kiambu.apiKey}`);
-  // eslint-disable-next-line no-console
-  console.log(`  Nakuru API Key: ${nakuru.apiKey}`);
-  // eslint-disable-next-line no-console
-  console.log('  Default password for all users: Password123!');
+  console.log('  API keys generated (check database or use prisma studio to view)');
 }
 
 main()

@@ -49,6 +49,10 @@ export function startForageTriggerWorker() {
   return forageTriggerQueue;
 }
 
+export function getForageTriggerQueue() {
+  return forageTriggerQueue;
+}
+
 export async function addForageTriggerJob(alertId) {
   if (!forageTriggerQueue) {
     throw new Error('Forage trigger queue not initialized');

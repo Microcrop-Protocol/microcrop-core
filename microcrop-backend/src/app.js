@@ -73,7 +73,8 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Request correlation ID
 app.use((req, _res, next) => {
-  req.id = req.headers['x-request-id'] || uuidv4();
+  req.clientRequestId = req.headers['x-request-id'] || null;
+  req.id = uuidv4();
   next();
 });
 
@@ -81,15 +82,17 @@ app.use(morgan('combined', { stream }));
 app.use(apiLimiter);
 
 // Static file serving for uploads (in production, use S3/GCS)
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+if (!env.isProd) {
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+}
 
 // Liveness probe — is the process alive?
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok' });
 });
 
 // Readiness probe — can the service handle requests?
-app.get('/health/ready', async (_req, res) => {
+app.get('/health/ready', async (req, res) => {
   const checks = { database: 'unknown', redis: 'unknown', rpc: 'unknown' };
 
   try {
@@ -118,7 +121,15 @@ app.get('/health/ready', async (_req, res) => {
   }
 
   const healthy = checks.database === 'healthy' && checks.redis === 'healthy';
-  res.status(healthy ? 200 : 503).json({ ready: healthy, checks, timestamp: new Date().toISOString() });
+  const status = healthy ? 'ok' : 'degraded';
+
+  // Only expose infrastructure details if the caller provides a valid health key
+  const healthKey = req.headers['x-health-key'];
+  if (healthKey && healthKey === env.internalApiKey) {
+    return res.status(healthy ? 200 : 503).json({ status, checks, timestamp: new Date().toISOString() });
+  }
+
+  res.status(healthy ? 200 : 503).json({ status });
 });
 
 // Routes

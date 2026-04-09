@@ -1,4 +1,5 @@
-import { payoutReceiver, provider } from '../../config/blockchain.js';
+import { payoutReceiver, provider, wallet } from '../../config/blockchain.js';
+import { ethers } from 'ethers';
 import prisma from '../../config/database.js';
 import logger from '../../utils/logger.js';
 import { addPayoutJob } from '../../workers/payout.worker.js';
@@ -10,6 +11,8 @@ let lastProcessedBlock = null;
 const POLL_INTERVAL_MS = 15000; // Poll every 15 seconds
 const GAP_WARNING_THRESHOLD = 5000; // ~2.5 hours on Base
 const FRAUD_VERIFICATION_TIMEOUT_MS = 30000; // 30 seconds
+const CONFIRMATION_DEPTH = 5; // Only process events with 5+ block confirmations
+const CATCH_UP_BATCH_SIZE = 2000; // Larger batches when catching up from a gap
 
 // Use payout receiver address as the sync state key
 const PAYOUT_RECEIVER_ADDRESS = env.isDev
@@ -87,24 +90,38 @@ async function handleDamageReportEvent(event) {
     damageBasisPoints: Number(damagePercentage),
   });
 
-  // Async fraud verification — non-blocking, must NEVER affect payout flow.
-  // Wrapped with Promise.race to enforce a 30s timeout and prevent hanging.
-  const fraudTimeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Fraud verification timed out after 30s')), FRAUD_VERIFICATION_TIMEOUT_MS)
-  );
+  // Blocking fraud verification — check BEFORE creating payout.
+  // Fail-open: if fraud check fails or times out, proceed with payout.
+  let fraudBlocked = false;
+  try {
+    const fraudTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Fraud verification timed out after 30s')), FRAUD_VERIFICATION_TIMEOUT_MS)
+    );
 
-  Promise.race([
-    import('../../services/fraud.service.js').then(({ default: fraudService }) =>
-      fraudService.verifyDamageAssessment(assessment.id)
-    ),
-    fraudTimeout,
-  ]).catch(err => {
-    // Errors in fraud verification must never affect the payout flow
-    logger.warn('Fraud verification did not complete', {
+    const fraudResult = await Promise.race([
+      import('../../services/fraud.service.js').then(({ default: fraudService }) =>
+        fraudService.verifyDamageAssessment(assessment.id)
+      ),
+      fraudTimeout,
+    ]);
+
+    // If fraud check returns a CRITICAL flag (score > 0.9), block automatic payout
+    if (fraudResult?.confidenceScore > 0.9) {
+      fraudBlocked = true;
+      logger.warn('Fraud check returned CRITICAL score — payout requires manual review', {
+        assessmentId: assessment.id,
+        policyId: policy.id,
+        confidenceScore: fraudResult.confidenceScore,
+        flags: fraudResult.flags?.length || 0,
+      });
+    }
+  } catch (err) {
+    // Fail-open: proceed with payout on fraud check failure/timeout
+    logger.warn('Fraud verification did not complete, proceeding with payout (fail-open)', {
       assessmentId: assessment.id,
       error: err.message,
     });
-  });
+  }
 
   // If damage percentage meets threshold, create payout
   if (damagePercent >= DAMAGE_THRESHOLD) {
@@ -138,6 +155,16 @@ async function handleDamageReportEvent(event) {
         status: 'PENDING',
       },
     });
+
+    // If fraud check flagged CRITICAL, leave payout in PENDING for manual review
+    if (fraudBlocked) {
+      logger.warn('Payout created in PENDING status for manual review (fraud CRITICAL)', {
+        payoutId: payout.id,
+        policyId: policy.id,
+        amount: payoutAmountUSDC,
+      });
+      return;
+    }
 
     await addPayoutJob({
       payoutId: payout.id,
@@ -212,11 +239,40 @@ async function handlePayoutInitiatedEvent(event) {
   }
 }
 
+async function checkGasBalance() {
+  if (!wallet) return;
+
+  try {
+    const balance = await provider.getBalance(wallet.address);
+    const ethBalance = parseFloat(ethers.formatEther(balance));
+
+    if (ethBalance < 0.001) {
+      logger.error('EMERGENCY: Platform wallet ETH balance critically low', {
+        address: wallet.address,
+        ethBalance,
+      });
+    } else if (ethBalance < 0.01) {
+      logger.error('CRITICAL: Platform wallet ETH balance low', {
+        address: wallet.address,
+        ethBalance,
+      });
+    }
+  } catch (error) {
+    logger.warn('Failed to check gas balance', { error: error.message });
+  }
+}
+
 async function pollEvents() {
   if (!payoutReceiver || !PAYOUT_RECEIVER_ADDRESS) return;
 
+  // H-7: Check gas balance at the start of each poll cycle
+  await checkGasBalance();
+
   try {
-    const currentBlock = await provider.getBlockNumber();
+    const latestBlock = await provider.getBlockNumber();
+
+    // H-5: Subtract CONFIRMATION_DEPTH to only process confirmed blocks
+    const currentBlock = Math.max(0, latestBlock - CONFIRMATION_DEPTH);
 
     if (lastProcessedBlock === null) {
       lastProcessedBlock = await getStartBlock();
@@ -237,8 +293,11 @@ async function pollEvents() {
       });
     }
 
+    // Use larger batch size when catching up from a significant gap
+    const batchSize = gap > 100 ? CATCH_UP_BATCH_SIZE : 9;
+
     const fromBlock = lastProcessedBlock;
-    const toBlock = Math.min(currentBlock, fromBlock + 9);
+    const toBlock = Math.min(currentBlock, fromBlock + batchSize);
 
     // Poll for DamageReportReceived events
     const damageFilter = payoutReceiver.filters.DamageReportReceived();

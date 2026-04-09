@@ -29,6 +29,21 @@ export const createPlotSchema = Joi.object({
   plantingDate: Joi.date().optional(),
 });
 
+export const updatePlotSchema = Joi.object({
+  name: Joi.string().optional(),
+  cropType: Joi.string()
+    .valid(...CropType)
+    .optional(),
+  plantingDate: Joi.date().optional(),
+  acreage: Joi.number().positive().optional(),
+}).min(1).messages({
+  'object.min': 'At least one field must be provided for update',
+});
+
+export const plotIdParamSchema = Joi.object({
+  plotId: Joi.string().uuid().required(),
+});
+
 export const listPlotsSchema = Joi.object({
   farmerId: Joi.string().uuid().optional(),
   page: Joi.number().integer().min(1).optional(),

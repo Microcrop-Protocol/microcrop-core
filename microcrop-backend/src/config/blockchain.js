@@ -26,7 +26,35 @@ const rpcUrl = env.isDev && env.baseSepoliaRpcUrl
 const fetchReq = new ethers.FetchRequest(rpcUrl);
 fetchReq.timeout = 30000; // 30s timeout for RPC calls
 
-export const provider = new ethers.JsonRpcProvider(fetchReq);
+// Use FallbackProvider with quorum=1 when a fallback RPC is configured.
+// This gives automatic failover if the primary RPC is down.
+// If only the primary RPC is set, use JsonRpcProvider as before (backward compatible).
+function createProvider() {
+  const primaryProvider = new ethers.JsonRpcProvider(fetchReq);
+
+  if (env.fallbackRpcUrl) {
+    const fallbackFetchReq = new ethers.FetchRequest(env.fallbackRpcUrl);
+    fallbackFetchReq.timeout = 30000;
+    const fallbackProvider = new ethers.JsonRpcProvider(fallbackFetchReq);
+
+    logger.info('Using FallbackProvider with primary + fallback RPC', {
+      primary: rpcUrl,
+      fallback: env.fallbackRpcUrl,
+    });
+
+    return new ethers.FallbackProvider(
+      [
+        { provider: primaryProvider, priority: 1, stallTimeout: 2000, weight: 1 },
+        { provider: fallbackProvider, priority: 2, stallTimeout: 2000, weight: 1 },
+      ],
+      1 // quorum=1: only need one provider to respond
+    );
+  }
+
+  return primaryProvider;
+}
+
+export const provider = createProvider();
 
 // Wallet (only if private key is configured and valid)
 let _wallet = null;
@@ -111,7 +139,13 @@ export function getRiskPoolContract(address) {
  * Get USDC contract address based on environment
  */
 export function getUsdcAddress() {
-  return env.isDev ? env.contractUsdcDev : env.contractUsdc || env.contractUsdcDev;
+  if (env.isDev) {
+    return env.contractUsdcDev;
+  }
+  if (!env.contractUsdc) {
+    throw new Error('CONTRACT_USDC must be set in production');
+  }
+  return env.contractUsdc;
 }
 
 export { ethers };

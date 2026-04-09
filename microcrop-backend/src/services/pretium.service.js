@@ -27,6 +27,8 @@ pretiumClient.interceptors.response.use(
 
 // Pretium's settlement wallet for Base network (for offramp - send USDC here first)
 let settlementWalletAddress = null;
+let settlementWalletFetchedAt = null;
+const SETTLEMENT_WALLET_TTL_MS = 60 * 60 * 1000; // 1 hour TTL
 
 const pretiumService = {
   /**
@@ -61,8 +63,12 @@ const pretiumService = {
    */
   async getSettlementWallet(network = 'Base') {
     try {
-      // Cache the settlement wallet
-      if (settlementWalletAddress) {
+      // Return cached value if still within TTL
+      if (
+        settlementWalletAddress &&
+        settlementWalletFetchedAt &&
+        Date.now() - settlementWalletFetchedAt < SETTLEMENT_WALLET_TTL_MS
+      ) {
         return settlementWalletAddress;
       }
 
@@ -76,6 +82,7 @@ const pretiumService = {
       }
 
       settlementWalletAddress = targetNetwork.settlement_wallet_address;
+      settlementWalletFetchedAt = Date.now();
       return settlementWalletAddress;
     } catch (error) {
       logger.error('Failed to get settlement wallet', { error: error.message, network });

@@ -76,3 +76,19 @@ export const paginationQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
 });
+
+export const gpsTrackSchema = Joi.object({
+  points: Joi.array()
+    .items(
+      Joi.object({
+        lat: Joi.number().min(-90).max(90).required(),
+        lon: Joi.number().min(-180).max(180).required(),
+        accuracy: Joi.number().positive().required(),
+        timestamp: Joi.string().isoDate().required(),
+      })
+    )
+    .min(4)
+    .max(10000)
+    .required(),
+  accuracyThreshold: Joi.number().min(1).max(50).default(15),
+});

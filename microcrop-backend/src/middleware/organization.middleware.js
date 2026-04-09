@@ -5,19 +5,19 @@ export async function loadOrganization(req, _res, next) {
   try {
     let org = null;
 
-    // Method 1: API Key header
-    const apiKey = req.headers['x-api-key'];
-    if (apiKey) {
-      org = await prisma.organization.findUnique({
-        where: { apiKey },
-      });
-    }
-
-    // Method 2: JWT organizationId
-    if (!org && req.user && req.user.organizationId) {
+    if (req.user && req.user.organizationId) {
+      // JWT auth: always resolve org from the authenticated user's organizationId
       org = await prisma.organization.findUnique({
         where: { id: req.user.organizationId },
       });
+    } else if (!req.user) {
+      // Service-to-service: use API key only when no JWT user is present
+      const apiKey = req.headers['x-api-key'];
+      if (apiKey) {
+        org = await prisma.organization.findUnique({
+          where: { apiKey },
+        });
+      }
     }
 
     if (!org) {

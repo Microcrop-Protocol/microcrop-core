@@ -53,6 +53,19 @@ export const farmersController = {
     }
   },
 
+  async fieldVerifyKyc(req, res, next) {
+    try {
+      const result = await farmerService.fieldVerifyKyc(
+        req.organization.id,
+        req.params.farmerId,
+        req.user.id,
+      );
+      res.status(200).json(formatResponse(result));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async bulkImport(req, res, next) {
     try {
       const result = await farmerService.bulkImport(req.organization.id, req.body.farmers);

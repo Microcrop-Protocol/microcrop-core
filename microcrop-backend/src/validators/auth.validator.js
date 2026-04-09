@@ -19,7 +19,7 @@ export const registerSchema = Joi.object({
       'string.pattern.base': 'Phone must be a valid Kenyan number (+254XXXXXXXXX)',
     }),
   role: Joi.string()
-    .valid('PLATFORM_ADMIN', 'ORG_ADMIN', 'ORG_STAFF', 'FARMER')
+    .valid('ORG_ADMIN', 'ORG_STAFF', 'FARMER')
     .required(),
   organizationId: Joi.string()
     .uuid()

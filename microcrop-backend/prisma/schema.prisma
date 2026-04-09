@@ -495,6 +495,10 @@ model Policy {
   txHash      String?
   blockNumber BigInt?
 
+  // On-chain step checkpoints (for multi-step atomicity)
+  premiumReceivedOnChain    Boolean @default(false)
+  premiumDistributedOnChain Boolean @default(false)
+
   // Payment tracking
   premiumPaid   Boolean   @default(false)
   premiumTxHash String?
@@ -523,6 +527,7 @@ model Policy {
   @@index([productType])
   @@index([herdId])
   @@index([insuranceUnitId, season])
+  @@index([onChainPolicyId])
 }
 
 enum CoverageType {
@@ -641,6 +646,8 @@ model Payout {
   @@index([policyId])
   @@index([status])
   @@index([initiatedAt])
+  @@index([status, processingAt])
+  @@index([status, swyptOrderId])
 }
 
 enum PayoutStatus {

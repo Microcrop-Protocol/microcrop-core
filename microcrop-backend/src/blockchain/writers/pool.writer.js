@@ -315,14 +315,71 @@ export async function createMutualPool({
 }
 
 /**
+ * Calculate slippage-protected minTokensOut for a deposit.
+ * Reads the current token price from the pool contract and applies 1% slippage tolerance.
+ */
+async function calculateMinTokensOut(poolAddress, amountWei) {
+  try {
+    const pool = getRiskPoolContract(poolAddress);
+    const tokenPrice = await pool.getTokenPrice();
+    // expectedTokens = amount / tokenPrice (both in 6 decimals)
+    const expectedTokens = (amountWei * BigInt(1e6)) / tokenPrice;
+    // 1% slippage: minTokensOut = expectedTokens * 99 / 100
+    return (expectedTokens * 99n) / 100n;
+  } catch (error) {
+    logger.warn('Failed to calculate slippage-protected minTokensOut, using 0', {
+      poolAddress,
+      error: error.message,
+    });
+    return 0n;
+  }
+}
+
+/**
+ * Calculate slippage-protected minUsdcOut for a withdrawal.
+ * Reads the current token price from the pool contract and applies 1% slippage tolerance.
+ */
+async function calculateMinUsdcOut(poolAddress, tokenAmountWei) {
+  try {
+    const pool = getRiskPoolContract(poolAddress);
+    const tokenPrice = await pool.getTokenPrice();
+    // expectedUsdc = tokenAmount * tokenPrice / 1e6 (both in 6 decimals)
+    const expectedUsdc = (tokenAmountWei * tokenPrice) / BigInt(1e6);
+    // 1% slippage: minUsdcOut = expectedUsdc * 99 / 100
+    return (expectedUsdc * 99n) / 100n;
+  } catch (error) {
+    logger.warn('Failed to calculate slippage-protected minUsdcOut, using 0', {
+      poolAddress,
+      error: error.message,
+    });
+    return 0n;
+  }
+}
+
+/**
  * Deposit USDC into a risk pool (add liquidity).
  * If orgWalletId is provided, sends via Privy server wallet (gas sponsored).
  * Otherwise falls back to the platform wallet.
+ *
+ * When minTokensOut is not explicitly provided (0), slippage protection is
+ * automatically calculated from the current on-chain token price (1% tolerance).
  */
 export async function depositToPool(poolAddress, amount, minTokensOut = 0, orgWalletId = null) {
   try {
     const amountWei = ethers.parseUnits(String(amount), 6);
     const usdcAddress = getUsdcAddress();
+
+    // Auto-calculate slippage protection when caller did not specify minTokensOut
+    if (minTokensOut === 0) {
+      const calculated = await calculateMinTokensOut(poolAddress, amountWei);
+      minTokensOut = calculated;
+      if (calculated > 0n) {
+        logger.info('Auto-calculated minTokensOut with 1% slippage', {
+          poolAddress,
+          minTokensOut: ethers.formatUnits(calculated, 6),
+        });
+      }
+    }
 
     logger.info('Depositing to pool', { poolAddress, amount, viaPrivy: !!orgWalletId });
 
@@ -432,10 +489,25 @@ export async function depositToPool(poolAddress, amount, minTokensOut = 0, orgWa
  * Withdraw USDC from a risk pool (remove liquidity).
  * If orgWalletId is provided, sends via Privy server wallet (gas sponsored).
  * Otherwise falls back to the platform wallet.
+ *
+ * When minUsdcOut is not explicitly provided (0), slippage protection is
+ * automatically calculated from the current on-chain token price (1% tolerance).
  */
 export async function withdrawFromPool(poolAddress, tokenAmount, minUsdcOut = 0, orgWalletId = null) {
   try {
     const tokenAmountWei = ethers.parseUnits(String(tokenAmount), 6);
+
+    // Auto-calculate slippage protection when caller did not specify minUsdcOut
+    if (minUsdcOut === 0) {
+      const calculated = await calculateMinUsdcOut(poolAddress, tokenAmountWei);
+      minUsdcOut = calculated;
+      if (calculated > 0n) {
+        logger.info('Auto-calculated minUsdcOut with 1% slippage', {
+          poolAddress,
+          minUsdcOut: ethers.formatUnits(calculated, 6),
+        });
+      }
+    }
 
     logger.info('Withdrawing from pool', { poolAddress, tokenAmount, viaPrivy: !!orgWalletId });
 

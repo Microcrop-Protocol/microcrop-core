@@ -2,7 +2,7 @@ import Bull from 'bull';
 import { env } from '../config/env.js';
 import prisma from '../config/database.js';
 import logger from '../utils/logger.js';
-import { createPolicyOnChain, activatePolicy } from '../blockchain/writers/policy.writer.js';
+import { createPolicyOnChain, activatePolicy, cancelPolicy } from '../blockchain/writers/policy.writer.js';
 import { receivePremium, distributePremiumToPool } from '../blockchain/writers/treasury.writer.js';
 import { addNotificationJob } from './notification.worker.js';
 import { BLOCKCHAIN_RETRY_QUEUE_NAME } from '../utils/constants.js';
@@ -28,6 +28,8 @@ export function startBlockchainRetryWorker() {
 
     if (type === 'CREATE_POLICY') {
       await processCreatePolicy(policyId);
+    } else if (type === 'CANCEL_POLICY') {
+      await processCancelPolicy(policyId);
     } else {
       logger.warn('Unknown blockchain retry job type', { type });
     }
@@ -65,6 +67,7 @@ export function startBlockchainRetryWorker() {
 /**
  * Process a CREATE_POLICY retry job.
  * Loads the policy, checks idempotency, creates on-chain, updates DB.
+ * Uses checkpoint tracking so retries resume from the correct step.
  */
 async function processCreatePolicy(policyId) {
   const policy = await prisma.policy.findUnique({
@@ -99,36 +102,93 @@ async function processCreatePolicy(policyId) {
     throw new Error('No farmer wallet or backend wallet configured');
   }
 
-  // Step 1: Create PENDING policy on-chain
-  const { onChainPolicyId, txHash, blockNumber } = await createPolicyOnChain({
-    farmerAddress,
-    plotId: policy.plotId,
-    sumInsured: Number(policy.sumInsured),
-    premium: Number(policy.premium),
-    durationDays: policy.durationDays,
-    coverageType: 4, // COMPREHENSIVE
-  });
-
   const poolAddress = policy.organization.poolAddress;
   const distributorAddress = policy.organization.walletAddress || env.backendWallet;
   const distributorName = policy.organization.name || 'MicroCrop';
 
-  // Step 2: Record premium in Treasury
-  await receivePremium(onChainPolicyId, Number(policy.premium));
+  // Determine which step to resume from based on checkpoint fields.
+  // onChainPolicyId non-null means step 1 completed.
+  // premiumReceivedOnChain true means step 2 completed.
+  // premiumDistributedOnChain true means step 3 completed.
+  let onChainPolicyId = policy.onChainPolicyId;
+  let txHash = policy.txHash;
+  let blockNumber = policy.blockNumber;
 
-  // Step 3: Distribute premium to RiskPool
-  await distributePremiumToPool(poolAddress, onChainPolicyId, Number(policy.premium), distributorAddress);
+  // Step 1: Create PENDING policy on-chain (skip if already done)
+  if (!onChainPolicyId) {
+    logger.info('Blockchain retry: executing step 1 — createPolicyOnChain', { policyId });
+
+    const result = await createPolicyOnChain({
+      farmerAddress,
+      plotId: policy.plotId,
+      sumInsured: Number(policy.sumInsured),
+      premium: Number(policy.premium),
+      durationDays: policy.durationDays,
+      coverageType: 4, // COMPREHENSIVE
+    });
+
+    onChainPolicyId = result.onChainPolicyId;
+    txHash = result.txHash;
+    blockNumber = result.blockNumber;
+
+    // Checkpoint: persist onChainPolicyId immediately so retries skip step 1
+    await prisma.policy.update({
+      where: { id: policyId },
+      data: {
+        onChainPolicyId,
+        txHash,
+        blockNumber: BigInt(blockNumber),
+      },
+    });
+
+    logger.info('Blockchain retry: step 1 checkpoint saved', { policyId, onChainPolicyId });
+  } else {
+    logger.info('Blockchain retry: step 1 already completed, resuming', { policyId, onChainPolicyId });
+  }
+
+  // Step 2: Record premium in Treasury (skip if already done)
+  if (!policy.premiumReceivedOnChain) {
+    logger.info('Blockchain retry: executing step 2 — receivePremium', { policyId, onChainPolicyId });
+
+    await receivePremium(onChainPolicyId, Number(policy.premium));
+
+    // Checkpoint: mark premium received
+    await prisma.policy.update({
+      where: { id: policyId },
+      data: { premiumReceivedOnChain: true },
+    });
+
+    logger.info('Blockchain retry: step 2 checkpoint saved', { policyId });
+  } else {
+    logger.info('Blockchain retry: step 2 already completed, resuming', { policyId });
+  }
+
+  // Step 3: Distribute premium to RiskPool (skip if already done)
+  if (!policy.premiumDistributedOnChain) {
+    logger.info('Blockchain retry: executing step 3 — distributePremiumToPool', { policyId, onChainPolicyId });
+
+    await distributePremiumToPool(poolAddress, onChainPolicyId, Number(policy.premium), distributorAddress);
+
+    // Checkpoint: mark premium distributed
+    await prisma.policy.update({
+      where: { id: policyId },
+      data: { premiumDistributedOnChain: true },
+    });
+
+    logger.info('Blockchain retry: step 3 checkpoint saved', { policyId });
+  } else {
+    logger.info('Blockchain retry: step 3 already completed, resuming', { policyId });
+  }
 
   // Step 4: Activate policy + mint NFT
+  logger.info('Blockchain retry: executing step 4 — activatePolicy', { policyId, onChainPolicyId });
+
   await activatePolicy(onChainPolicyId, distributorAddress, distributorName, 'Africa', poolAddress);
 
   await prisma.policy.update({
     where: { id: policyId },
     data: {
       status: 'ACTIVE',
-      onChainPolicyId,
-      txHash,
-      blockNumber: BigInt(blockNumber),
     },
   });
 
@@ -146,6 +206,33 @@ async function processCreatePolicy(policyId) {
       message: `Your policy ${policy.policyNumber} is now active! Coverage starts immediately.`,
     }).catch((err) => logger.warn('Failed to queue activation SMS', { error: err.message }));
   }
+}
+
+/**
+ * Process a CANCEL_POLICY retry job.
+ * Cancels an on-chain policy when it has been cancelled off-chain.
+ */
+async function processCancelPolicy(policyId) {
+  const policy = await prisma.policy.findUnique({
+    where: { id: policyId },
+  });
+
+  if (!policy) {
+    logger.warn('Blockchain retry: policy not found for cancellation, skipping', { policyId });
+    return;
+  }
+
+  if (!policy.onChainPolicyId) {
+    logger.info('Blockchain retry: policy has no on-chain ID, skipping cancellation', { policyId });
+    return;
+  }
+
+  await cancelPolicy(policy.onChainPolicyId);
+
+  logger.info('Blockchain retry: policy cancelled on-chain', {
+    policyId,
+    onChainPolicyId: policy.onChainPolicyId,
+  });
 }
 
 /**

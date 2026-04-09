@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { loadOrganization } from '../middleware/organization.middleware.js';
+import { authorize } from '../middleware/authorize.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { createPlotSchema, listPlotsSchema } from '../validators/policy.validator.js';
+import { createPlotSchema, updatePlotSchema, plotIdParamSchema, listPlotsSchema } from '../validators/policy.validator.js';
 import farmerService from '../services/farmer.service.js';
 import { formatResponse, formatPaginatedResponse } from '../utils/helpers.js';
 
@@ -10,7 +11,7 @@ const router = Router();
 
 router.use(authenticate, loadOrganization);
 
-router.post('/', validate(createPlotSchema), async (req, res, next) => {
+router.post('/', authorize('ORG_ADMIN', 'ORG_STAFF'), validate(createPlotSchema), async (req, res, next) => {
   try {
     const result = await farmerService.createPlot(req.organization.id, req.body);
     res.status(201).json(formatResponse(result));
@@ -31,6 +32,15 @@ router.get('/', validate(listPlotsSchema, 'query'), async (req, res, next) => {
 router.get('/:plotId', async (req, res, next) => {
   try {
     const result = await farmerService.getPlot(req.organization.id, req.params.plotId);
+    res.status(200).json(formatResponse(result));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put('/:plotId', authorize('ORG_ADMIN', 'ORG_STAFF'), validate(plotIdParamSchema, 'params'), validate(updatePlotSchema), async (req, res, next) => {
+  try {
+    const result = await farmerService.updatePlot(req.organization.id, req.params.plotId, req.body);
     res.status(200).json(formatResponse(result));
   } catch (error) {
     next(error);

@@ -7,6 +7,7 @@ import {
   registerFarmerSchema,
   updateFarmerSchema,
   updateKycSchema,
+  farmerIdParamSchema,
   listFarmersSchema,
 } from '../validators/farmer.validator.js';
 import { bulkFarmerSchema, bulkPlotSchema } from '../validators/staff.validator.js';
@@ -21,8 +22,10 @@ router.use(authenticate, loadOrganization);
 router.post('/register', authorize('ORG_ADMIN', 'ORG_STAFF'), validate(registerFarmerSchema), farmersController.register);
 router.get('/', validate(listFarmersSchema, 'query'), farmersController.list);
 router.get('/:farmerId', farmersController.getById);
-router.put('/:farmerId', validate(updateFarmerSchema), farmersController.update);
+router.put('/:farmerId', authorize('ORG_ADMIN', 'ORG_STAFF'), validate(updateFarmerSchema), farmersController.update);
 router.put('/:farmerId/kyc', authorize('ORG_ADMIN'), validate(updateKycSchema), farmersController.updateKyc);
+
+router.put('/:farmerId/kyc/field-verify', authorize('ORG_ADMIN', 'ORG_STAFF'), validate(farmerIdParamSchema, 'params'), farmersController.fieldVerifyKyc);
 
 // Farmer's herds
 router.get('/:farmerId/herds', async (req, res, next) => {

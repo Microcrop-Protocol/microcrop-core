@@ -5,16 +5,16 @@ function createLimiter({ windowMs, max, keyPrefix = 'global' }) {
   const windowSec = Math.ceil(windowMs / 1000);
 
   return async (req, res, next) => {
-    const identifier = req.headers['x-api-key'] || req.ip;
+    const identifier = req.user?.id || req.ip;
     const key = `rate_limit:${keyPrefix}:${identifier}`;
 
     try {
-      const count = await redis.incr(key);
-
-      // Set TTL on first request in the window
-      if (count === 1) {
-        await redis.expire(key, windowSec);
-      }
+      // Atomic INCR + EXPIRE via pipeline
+      const pipeline = redis.pipeline();
+      pipeline.incr(key);
+      pipeline.expire(key, windowSec);
+      const results = await pipeline.exec();
+      const count = results[0][1];
 
       // Get remaining TTL for headers
       const ttl = await redis.ttl(key);

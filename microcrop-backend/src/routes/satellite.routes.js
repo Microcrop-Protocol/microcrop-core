@@ -5,6 +5,7 @@ import { authorize } from '../middleware/authorize.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import {
   setBoundarySchema,
+  gpsTrackSchema,
   ndviQuerySchema,
   resolveFraudFlagSchema,
   fraudFlagsQuerySchema,
@@ -80,6 +81,180 @@ router.post(
 
       res.status(200).json(formatResponse({
         plot: updated,
+        overlaps: overlaps.length > 0 ? overlaps : null,
+        overlapWarning: overlaps.length > 0
+          ? `Boundary overlaps with ${overlaps.length} other plot(s)`
+          : null,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * POST /plots/:plotId/boundary/gps-track
+ * Convert raw GPS track points (from a boundary walk) into a GeoJSON polygon
+ * and store it as the plot boundary.
+ */
+router.post(
+  '/plots/:plotId/boundary/gps-track',
+  authorize('ORG_ADMIN', 'ORG_STAFF'),
+  validate(gpsTrackSchema),
+  async (req, res, next) => {
+    try {
+      const { plotId } = req.params;
+      const { points, accuracyThreshold } = req.body;
+
+      // Verify plot exists and belongs to this organization
+      const plot = await prisma.plot.findUnique({ where: { id: plotId } });
+      if (!plot) {
+        throw new NotFoundError('Plot not found');
+      }
+      if (plot.organizationId !== req.organization.id) {
+        throw new NotFoundError('Plot not found');
+      }
+
+      const totalPointsReceived = points.length;
+
+      // 1. Filter out points with accuracy worse than threshold
+      const filtered = points.filter((p) => p.accuracy <= accuracyThreshold);
+      const pointsFilteredOut = totalPointsReceived - filtered.length;
+
+      if (filtered.length < 4) {
+        throw new ValidationError(
+          `Only ${filtered.length} point(s) remain after accuracy filtering (threshold: ${accuracyThreshold}m). Minimum 4 required.`
+        );
+      }
+
+      // 2. Sort by timestamp
+      filtered.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      // 3. Douglas-Peucker simplification (tolerance ~0.00005 degrees ~ 5.5m)
+      const SIMPLIFICATION_TOLERANCE = 0.00005;
+
+      function perpendicularDistance(point, lineStart, lineEnd) {
+        const dx = lineEnd.lon - lineStart.lon;
+        const dy = lineEnd.lat - lineStart.lat;
+        const lengthSq = dx * dx + dy * dy;
+        if (lengthSq === 0) {
+          const ex = point.lon - lineStart.lon;
+          const ey = point.lat - lineStart.lat;
+          return Math.sqrt(ex * ex + ey * ey);
+        }
+        const t = Math.max(0, Math.min(1,
+          ((point.lon - lineStart.lon) * dx + (point.lat - lineStart.lat) * dy) / lengthSq
+        ));
+        const projLon = lineStart.lon + t * dx;
+        const projLat = lineStart.lat + t * dy;
+        const dLon = point.lon - projLon;
+        const dLat = point.lat - projLat;
+        return Math.sqrt(dLon * dLon + dLat * dLat);
+      }
+
+      function douglasPeucker(pts, tolerance) {
+        if (pts.length <= 2) return pts;
+
+        let maxDist = 0;
+        let maxIdx = 0;
+        const first = pts[0];
+        const last = pts[pts.length - 1];
+
+        for (let i = 1; i < pts.length - 1; i++) {
+          const dist = perpendicularDistance(pts[i], first, last);
+          if (dist > maxDist) {
+            maxDist = dist;
+            maxIdx = i;
+          }
+        }
+
+        if (maxDist > tolerance) {
+          const left = douglasPeucker(pts.slice(0, maxIdx + 1), tolerance);
+          const right = douglasPeucker(pts.slice(maxIdx), tolerance);
+          return left.slice(0, -1).concat(right);
+        }
+
+        return [first, last];
+      }
+
+      let simplified = douglasPeucker(filtered, SIMPLIFICATION_TOLERANCE);
+
+      // Ensure we still have enough points for a polygon (min 3 distinct vertices)
+      if (simplified.length < 3) {
+        simplified = filtered;
+      }
+
+      // 4. Close the polygon (ensure first == last)
+      const coords = simplified.map((p) => [p.lon, p.lat]);
+      const firstCoord = coords[0];
+      const lastCoord = coords[coords.length - 1];
+      if (firstCoord[0] !== lastCoord[0] || firstCoord[1] !== lastCoord[1]) {
+        coords.push([firstCoord[0], firstCoord[1]]);
+      }
+
+      // Must have at least 4 coordinates (3 vertices + closing point) for a valid polygon
+      if (coords.length < 4) {
+        throw new ValidationError(
+          'GPS track does not form a valid polygon. At least 3 distinct points are required after simplification.'
+        );
+      }
+
+      // 5. Build GeoJSON Polygon
+      const boundary = {
+        type: 'Polygon',
+        coordinates: [coords],
+      };
+
+      // 6. Validate the polygon (self-intersections, structure)
+      const geoResult = geometryService.validateGeoJSON(boundary);
+      if (!geoResult.valid) {
+        throw new ValidationError(`Generated polygon is invalid: ${geoResult.error}`);
+      }
+
+      // 7. Compute centroid and area using existing geometry service
+      const metrics = geometryService.computePlotMetrics(boundary);
+
+      // 8. Compute average accuracy of points that were kept
+      const avgAccuracy = parseFloat(
+        (filtered.reduce((sum, p) => sum + p.accuracy, 0) / filtered.length).toFixed(1)
+      );
+
+      // 9. Persist boundary + computed metrics
+      const updated = await prisma.plot.update({
+        where: { id: plotId },
+        data: {
+          boundary,
+          centroidLat: metrics.centroidLat,
+          centroidLon: metrics.centroidLon,
+          areaHectares: metrics.areaHectares,
+        },
+      });
+
+      // 10. Check for overlaps (non-blocking)
+      let overlaps = [];
+      try {
+        overlaps = await geometryService.checkOverlaps(req.organization.id, boundary, plotId);
+      } catch (error) {
+        logger.warn('Overlap check failed (non-blocking)', { plotId, error: error.message });
+      }
+
+      const finalVertices = coords.length - 1; // exclude closing duplicate
+
+      res.status(200).json(formatResponse({
+        plot: {
+          id: updated.id,
+          boundary: updated.boundary,
+          centroidLat: metrics.centroidLat,
+          centroidLon: metrics.centroidLon,
+          areaHectares: metrics.areaHectares,
+        },
+        metadata: {
+          totalPointsReceived,
+          pointsFilteredOut,
+          finalVertices,
+          accuracyThreshold,
+          avgAccuracy,
+        },
         overlaps: overlaps.length > 0 ? overlaps : null,
         overlapWarning: overlaps.length > 0
           ? `Boundary overlaps with ${overlaps.length} other plot(s)`

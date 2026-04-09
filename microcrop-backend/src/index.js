@@ -13,7 +13,7 @@ import * as payoutListener from './blockchain/listeners/payout.listener.js';
 import { startPayoutWorker, getPayoutQueue } from './workers/payout.worker.js';
 import { startNotificationWorker, getNotificationQueue } from './workers/notification.worker.js';
 import { startBlockchainRetryWorker, getBlockchainRetryQueue } from './workers/blockchain.worker.js';
-import { startForageTriggerWorker } from './workers/forage-trigger.worker.js';
+import { startForageTriggerWorker, getForageTriggerQueue } from './workers/forage-trigger.worker.js';
 import { startSatelliteWorker, getSatelliteQueue } from './workers/satellite.worker.js';
 
 const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds forced exit
@@ -89,11 +89,13 @@ async function shutdown(signal) {
     const notificationQueue = getNotificationQueue();
     const blockchainRetryQueue = getBlockchainRetryQueue();
     const satelliteQueue = getSatelliteQueue();
+    const forageTriggerQueue = getForageTriggerQueue();
     const closePromises = [];
     if (payoutQueue) closePromises.push(payoutQueue.close());
     if (notificationQueue) closePromises.push(notificationQueue.close());
     if (blockchainRetryQueue) closePromises.push(blockchainRetryQueue.close());
     if (satelliteQueue) closePromises.push(satelliteQueue.close());
+    if (forageTriggerQueue) closePromises.push(forageTriggerQueue.close());
     if (closePromises.length > 0) {
       await Promise.all(closePromises);
       logger.info('Bull queues closed');
@@ -129,5 +131,5 @@ process.on('unhandledRejection', (reason) => {
 });
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception', { message: error.message, stack: error.stack });
-  process.exit(1);
+  setTimeout(() => process.exit(1), 1000);
 });

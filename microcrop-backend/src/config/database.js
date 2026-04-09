@@ -16,6 +16,10 @@ const prisma = new PrismaClient({
       ? [{ emit: 'event', level: 'query' }]
       : []),
   ],
+  transactionOptions: {
+    maxWait: 5000,
+    timeout: 10000,
+  },
 });
 
 prisma.$on('error', (e) => {

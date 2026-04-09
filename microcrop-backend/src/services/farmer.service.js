@@ -141,6 +141,35 @@ const farmerService = {
     }
   },
 
+  async fieldVerifyKyc(organizationId, farmerId, agentUserId) {
+    try {
+      const farmer = await prisma.farmer.findFirst({
+        where: { id: farmerId, organizationId },
+      });
+
+      if (!farmer) {
+        throw new NotFoundError('Farmer not found');
+      }
+
+      if (farmer.kycStatus !== 'PENDING') {
+        throw new ValidationError(`Cannot field-verify a farmer with KYC status: ${farmer.kycStatus}`);
+      }
+
+      const updated = await prisma.farmer.update({
+        where: { id: farmerId },
+        data: {
+          kycStatus: 'APPROVED',
+          kycApprovedBy: agentUserId,
+          kycApprovedAt: new Date(),
+        },
+      });
+
+      return updated;
+    } catch (error) {
+      throw error;
+    }
+  },
+
   async createPlot(organizationId, data) {
     try {
       const farmer = await prisma.farmer.findFirst({
@@ -195,6 +224,37 @@ const farmerService = {
       ]);
 
       return { plots, total };
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async updatePlot(organizationId, plotId, data) {
+    try {
+      const plot = await prisma.plot.findFirst({
+        where: { id: plotId, organizationId },
+      });
+
+      if (!plot) {
+        throw new NotFoundError('Plot not found');
+      }
+
+      const updated = await prisma.plot.update({
+        where: { id: plotId },
+        data,
+        include: {
+          farmer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              phoneNumber: true,
+            },
+          },
+        },
+      });
+
+      return updated;
     } catch (error) {
       throw error;
     }

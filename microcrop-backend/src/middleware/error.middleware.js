@@ -24,12 +24,15 @@ export function errorHandler(err, req, res, _next) {
 
   // Prisma known errors
   if (err.code === 'P2002') {
+    logger.warn('Prisma unique constraint violation', {
+      ...errorContext,
+      fields: err.meta?.target,
+    });
     return res.status(409).json({
       success: false,
       error: {
         code: 'CONFLICT',
         message: 'Resource already exists',
-        details: { fields: err.meta?.target },
       },
     });
   }

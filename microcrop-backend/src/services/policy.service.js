@@ -7,6 +7,7 @@ import {
   getDurationFactor,
 } from '../utils/constants.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
+import { addBlockchainRetryJob } from '../workers/blockchain.worker.js';
 import logger from '../utils/logger.js';
 
 const policyService = {
@@ -202,6 +203,19 @@ const policyService = {
           startDate = now;
           endDate = new Date(now);
           endDate.setDate(endDate.getDate() + durationDays);
+
+          // M-11: Check for duplicate active/pending crop policy on same plot with overlapping dates
+          const duplicatePolicy = await tx.policy.findFirst({
+            where: {
+              plotId,
+              status: { in: ['ACTIVE', 'PENDING'] },
+              startDate: { lte: endDate },
+              endDate: { gte: startDate },
+            },
+          });
+          if (duplicatePolicy) {
+            throw new ValidationError('An active policy already exists for this plot');
+          }
         }
 
         platformFee = parseFloat(((premium * PLATFORM_FEE_PERCENT) / 100).toFixed(2));
@@ -467,6 +481,20 @@ const policyService = {
 
         return cancelledPolicy;
       });
+
+      // M-12: If the policy was created on-chain, queue a blockchain job to cancel it
+      if (updated.onChainPolicyId) {
+        addBlockchainRetryJob({
+          type: 'CANCEL_POLICY',
+          policyId: updated.id,
+        }).catch((err) => {
+          logger.warn('Failed to queue on-chain policy cancellation', {
+            policyId: updated.id,
+            onChainPolicyId: updated.onChainPolicyId,
+            error: err.message,
+          });
+        });
+      }
 
       logger.info('Policy cancelled', {
         policyId,

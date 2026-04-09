@@ -42,23 +42,52 @@ export function startPayoutWorker() {
       const activeProvider = paymentProviderService.getActiveProvider();
       logger.info('Using payment provider for offramp', { provider: activeProvider, payoutId });
 
-      // 3. Get offramp quote for KES conversion
+      // 3. Lock exchange rate: reuse stored rate from previous attempt, or fetch fresh
+      const existingPayout = await prisma.payout.findUnique({ where: { id: payoutId } });
+      let lockedRate = existingPayout?.exchangeRate ? parseFloat(existingPayout.exchangeRate) : null;
+      let lockedAmountKES = existingPayout?.amountKES ? parseFloat(existingPayout.amountKES) : null;
+
+      // Fetch a fresh quote for comparison or initial rate
       const quote = await paymentProviderService.getOfframpQuote(amountUSDC, 'USDC', 'KES');
+      const freshRate = parseFloat(quote.exchangeRate);
+
+      if (lockedRate) {
+        // Rate was stored from a previous attempt — check slippage but use stored rate
+        const drift = Math.abs(freshRate - lockedRate) / lockedRate;
+        if (drift > 0.05) {
+          logger.warn('Exchange rate drifted >5% from locked rate', {
+            payoutId,
+            lockedRate,
+            freshRate,
+            driftPercent: (drift * 100).toFixed(2),
+          });
+        }
+        // Proceed with previously locked rate
+        logger.info('Using previously locked exchange rate', {
+          payoutId,
+          lockedRate,
+          freshRate,
+        });
+      } else {
+        // First attempt — lock the fresh rate
+        lockedRate = freshRate;
+        lockedAmountKES = parseFloat(quote.outputAmount);
+      }
 
       logger.info('Payout offramp quote received', {
         payoutId,
         amountUSDC,
-        amountKES: quote.outputAmount,
-        exchangeRate: quote.exchangeRate,
+        amountKES: lockedAmountKES,
+        exchangeRate: lockedRate,
         provider: quote.provider,
       });
 
-      // 4. Update payout with quote info
+      // 4. Update payout with locked rate info
       await prisma.payout.update({
         where: { id: payoutId },
         data: {
-          exchangeRate: parseFloat(quote.exchangeRate),
-          amountKES: parseFloat(quote.outputAmount),
+          exchangeRate: lockedRate,
+          amountKES: lockedAmountKES,
         },
       });
 
@@ -102,7 +131,7 @@ export function startPayoutWorker() {
       // 7. Initiate offramp via provider API
       // Pretium expects KES amount, Swypt works with the tx hash
       const amountForProvider = activeProvider === PROVIDERS.PRETIUM
-        ? parseFloat(quote.outputAmount) // KES for Pretium
+        ? lockedAmountKES // KES for Pretium (use locked rate, not fresh quote)
         : amountUSDC; // USDC amount (not really used by Swypt, but for reference)
 
       const offrampResult = await paymentProviderService.initiateOfframp(
@@ -128,47 +157,24 @@ export function startPayoutWorker() {
         },
       });
 
-      // 9. Poll for offramp completion (with timeout)
-      const maxAttempts = 30; // 5 minutes with 10s intervals
-      let attempts = 0;
+      // 9. Quick status check — do NOT poll in a long loop to avoid Bull job stalling.
+      //    The checkPendingPayouts cron will finalize payouts that are still PROCESSING.
       let offrampStatus = null;
 
-      while (attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10 seconds
-        attempts++;
-
-        try {
-          offrampStatus = await paymentProviderService.checkOfframpStatus(
-            offrampResult.orderId,
-            offrampResult.provider
-          );
-
-          if (offrampStatus.status === 'SUCCESS' || offrampStatus.status === 'COMPLETED' || offrampStatus.status === 'COMPLETE') {
-            logger.info('Offramp completed', {
-              payoutId,
-              mpesaRef: offrampStatus.mpesaRef,
-              provider: offrampResult.provider,
-            });
-            break;
-          } else if (offrampStatus.status === 'FAILED') {
-            throw new Error('Offramp failed: ' + (offrampStatus.reason || 'Unknown error'));
-          }
-
-          logger.debug('Offramp still processing', {
-            payoutId,
-            status: offrampStatus.status,
-            attempt: attempts,
-          });
-        } catch (pollError) {
-          logger.warn('Error polling offramp status', {
-            payoutId,
-            error: pollError.message,
-            attempt: attempts,
-          });
-        }
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5000)); // Brief wait for fast completions
+        offrampStatus = await paymentProviderService.checkOfframpStatus(
+          offrampResult.orderId,
+          offrampResult.provider
+        );
+      } catch (pollError) {
+        logger.warn('Initial offramp status check failed', {
+          payoutId,
+          error: pollError.message,
+        });
       }
 
-      // 10. Finalize payout
+      // 10. Finalize payout if already complete, otherwise leave for cron
       const isComplete = offrampStatus &&
         (offrampStatus.status === 'SUCCESS' || offrampStatus.status === 'COMPLETED' || offrampStatus.status === 'COMPLETE');
 
@@ -188,7 +194,7 @@ export function startPayoutWorker() {
             reference: `payout-${payoutId}`,
             type: 'PAYOUT',
             status: 'COMPLETED',
-            amount: parseFloat(quote.outputAmount),
+            amount: lockedAmountKES,
             currency: 'KES',
             phoneNumber,
             organizationId: organizationId || undefined,
@@ -199,7 +205,7 @@ export function startPayoutWorker() {
               provider: offrampResult.provider,
               orderId: offrampResult.orderId,
               amountUSDC: amountUSDC,
-              exchangeRate: quote.exchangeRate,
+              exchangeRate: lockedRate,
             },
           },
         });
@@ -207,12 +213,15 @@ export function startPayoutWorker() {
         logger.info('Payout completed successfully', {
           payoutId,
           mpesaRef: offrampStatus.mpesaRef,
-          amountKES: quote.outputAmount,
+          amountKES: lockedAmountKES,
           provider: offrampResult.provider,
         });
+      } else if (offrampStatus && offrampStatus.status === 'FAILED') {
+        throw new Error('Offramp failed: ' + (offrampStatus.reason || 'Unknown error'));
       } else {
-        // Payout is still processing - will be completed via webhook or manual check
-        logger.info('Payout submitted, awaiting M-Pesa confirmation', {
+        // Payout still processing — job completes successfully here.
+        // The checkPendingPayouts cron will finalize it.
+        logger.info('Payout submitted, awaiting M-Pesa confirmation via cron', {
           payoutId,
           orderId: offrampResult.orderId,
           provider: offrampResult.provider,
@@ -310,7 +319,7 @@ export async function checkPendingPayouts() {
       status: 'PROCESSING',
       swyptOrderId: { not: null },
       processingAt: {
-        lte: new Date(Date.now() - 5 * 60 * 1000),
+        lte: new Date(Date.now() - 30 * 1000), // 30 seconds after processing started
       },
     },
     take: 50,
@@ -337,6 +346,34 @@ export async function checkPendingPayouts() {
             completedAt: new Date(),
           },
         });
+
+        // Create transaction record if it doesn't already exist
+        const existingTx = await prisma.transaction.findFirst({
+          where: { reference: `payout-${payout.id}` },
+        });
+
+        if (!existingTx) {
+          await prisma.transaction.create({
+            data: {
+              reference: `payout-${payout.id}`,
+              type: 'PAYOUT',
+              status: 'COMPLETED',
+              amount: parseFloat(payout.amountKES || 0),
+              currency: 'KES',
+              phoneNumber: payout.mpesaPhone,
+              organizationId: payout.organizationId || undefined,
+              policyId: payout.policyId || undefined,
+              externalRef: status.mpesaRef,
+              completedAt: new Date(),
+              metadata: {
+                provider: provider,
+                orderId: payout.swyptOrderId,
+                amountUSDC: parseFloat(payout.amountUSDC),
+                exchangeRate: payout.exchangeRate ? parseFloat(payout.exchangeRate) : null,
+              },
+            },
+          });
+        }
 
         logger.info('Pending payout marked complete', {
           payoutId: payout.id,

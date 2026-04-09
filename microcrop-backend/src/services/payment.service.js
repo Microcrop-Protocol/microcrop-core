@@ -48,6 +48,14 @@ const paymentService = {
       throw new ValidationError('Organization does not have a deployed risk pool');
     }
 
+    // Validate payment amount covers the policy premium (KES)
+    const expectedPremium = Number(policy.premiumKES || policy.premium);
+    if (!data.amount || Number(data.amount) < expectedPremium) {
+      throw new ValidationError(
+        `Payment amount ${data.amount} is less than required premium ${expectedPremium} KES`
+      );
+    }
+
     const reference = uuidv4();
     const poolAddress = policy.organization.poolAddress;
     const usdcAddress = getUsdcAddress();
@@ -207,13 +215,56 @@ const paymentService = {
     const provider = webhookData.provider || transaction.metadata?.provider;
 
     if (webhookData.status === 'SUCCESS' || webhookData.status === 'COMPLETED') {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'COMPLETED',
-          completedAt: new Date(),
-          externalRef: webhookData.mpesaRef || webhookData.transactionId,
-        },
+      // Verify the received amount covers the policy premium
+      if (transaction.policyId && webhookData.amount != null) {
+        const policy = await prisma.policy.findUnique({
+          where: { id: transaction.policyId },
+        });
+
+        if (policy) {
+          const expectedPremium = Number(policy.premiumKES || policy.premium);
+          if (Number(webhookData.amount) < expectedPremium) {
+            logger.warn('Insufficient payment amount received', {
+              transactionId: transaction.id,
+              policyId: transaction.policyId,
+              received: webhookData.amount,
+              expected: expectedPremium,
+            });
+
+            await prisma.transaction.update({
+              where: { id: transaction.id },
+              data: {
+                status: 'FAILED',
+                failureReason: 'Insufficient payment amount',
+                externalRef: webhookData.mpesaRef || webhookData.transactionId,
+              },
+            });
+            return;
+          }
+        }
+      }
+
+      // Wrap transaction + policy updates in a DB transaction
+      await prisma.$transaction(async (tx) => {
+        await tx.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            externalRef: webhookData.mpesaRef || webhookData.transactionId,
+          },
+        });
+
+        if (transaction.policyId) {
+          await tx.policy.update({
+            where: { id: transaction.policyId },
+            data: {
+              premiumPaid: true,
+              premiumPaidAt: new Date(),
+              premiumTxHash: webhookData.mpesaRef,
+            },
+          });
+        }
       });
 
       if (transaction.policyId) {
@@ -242,19 +293,13 @@ const paymentService = {
           return;
         }
 
+        // Premium already marked paid in the DB transaction above.
+        // Blockchain operations run AFTER commit to avoid holding the DB tx open.
         try {
           // Create policy on-chain
           const backendWallet = env.backendWallet;
           if (!backendWallet) {
             logger.error('Backend wallet not configured - cannot create policy on-chain');
-            await prisma.policy.update({
-              where: { id: transaction.policyId },
-              data: {
-                premiumPaid: true,
-                premiumPaidAt: new Date(),
-                premiumTxHash: webhookData.mpesaRef,
-              },
-            });
             return;
           }
 
@@ -298,9 +343,6 @@ const paymentService = {
             where: { id: transaction.policyId },
             data: {
               status: 'ACTIVE',
-              premiumPaid: true,
-              premiumPaidAt: new Date(),
-              premiumTxHash: webhookData.mpesaRef,
               onChainPolicyId,
               txHash,
               blockNumber: BigInt(blockNumber),
@@ -320,17 +362,8 @@ const paymentService = {
             error: error.message,
           });
 
-          // Mark premium as paid but leave status PENDING so it can be retried
-          // DO NOT set ACTIVE without on-chain confirmation
-          await prisma.policy.update({
-            where: { id: transaction.policyId },
-            data: {
-              premiumPaid: true,
-              premiumPaidAt: new Date(),
-              premiumTxHash: webhookData.mpesaRef,
-            },
-          });
-
+          // Premium already marked paid in DB transaction above.
+          // Leave status PENDING so it can be retried — DO NOT set ACTIVE without on-chain confirmation.
           // Queue automatic retry for on-chain policy creation
           addBlockchainRetryJob({
             type: 'CREATE_POLICY',

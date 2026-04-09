@@ -33,6 +33,7 @@ export const env = {
 
   // Blockchain
   baseRpcUrl: optional('BASE_RPC_URL', 'https://mainnet.base.org'),
+  fallbackRpcUrl: optional('FALLBACK_RPC_URL', ''),
   baseChainId: parseInt(optional('BASE_CHAIN_ID', '8453'), 10),
   privateKey: optional('PRIVATE_KEY', ''),
 
@@ -115,5 +116,46 @@ export const env = {
   ndviLookbackDays: parseInt(optional('NDVI_LOOKBACK_DAYS', '90'), 10),
   ndviBaselineYears: parseInt(optional('NDVI_BASELINE_YEARS', '3'), 10),
 };
+
+export function validateProductionEnv() {
+  if (env.nodeEnv !== 'production') return;
+
+  const requiredVars = {
+    PRIVATE_KEY: env.privateKey,
+    REDIS_URL: env.redisUrl,
+    WEBHOOK_SECRET: env.webhookSecret,
+    JWT_SECRET: env.jwtSecret,
+    INTERNAL_API_KEY: env.internalApiKey,
+    ALLOWED_ORIGINS: env.allowedOrigins,
+    CONTRACT_POLICY_MANAGER: env.contractPolicyManager,
+    CONTRACT_RISK_POOL_FACTORY: env.contractRiskPoolFactory,
+    CONTRACT_PLATFORM_TREASURY: env.contractPlatformTreasury,
+    CONTRACT_USDC: env.contractUsdc,
+  };
+
+  const missing = [];
+
+  for (const [name, value] of Object.entries(requiredVars)) {
+    if (!value) {
+      missing.push(name);
+    }
+  }
+
+  if (env.jwtSecret && env.jwtSecret.length < 32) {
+    missing.push('JWT_SECRET (must be at least 32 characters)');
+  }
+
+  if (missing.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error('FATAL: Missing required production environment variables:');
+    for (const name of missing) {
+      // eslint-disable-next-line no-console
+      console.error(`  - ${name}`);
+    }
+    process.exit(1);
+  }
+}
+
+validateProductionEnv();
 
 export default env;

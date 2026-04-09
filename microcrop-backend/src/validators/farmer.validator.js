@@ -36,6 +36,10 @@ export const updateKycSchema = Joi.object({
   }),
 });
 
+export const farmerIdParamSchema = Joi.object({
+  farmerId: Joi.string().uuid().required(),
+});
+
 export const listFarmersSchema = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(100).optional(),

@@ -2,10 +2,16 @@ import crypto from 'crypto';
 import prisma from '../config/database.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid';
 import { env } from '../config/env.js';
+import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
 import emailService from './email.service.js';
-import { ConflictError, NotFoundError, UnauthorizedError } from '../utils/errors.js';
+import { ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../utils/errors.js';
+
+const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
+const LOGIN_LOCKOUT_TTL = 15 * 60; // 15 minutes in seconds
+const LOGIN_MAX_ATTEMPTS = 10;
 
 function excludePassword(user) {
   const { password, ...userWithoutPassword } = user;
@@ -13,6 +19,8 @@ function excludePassword(user) {
 }
 
 function generateTokens(user) {
+  const tokenId = uuidv4();
+
   const accessToken = jwt.sign(
     {
       userId: user.id,
@@ -25,27 +33,48 @@ function generateTokens(user) {
   );
 
   const refreshToken = jwt.sign(
-    { userId: user.id },
+    { userId: user.id, tokenId },
     env.jwtRefreshSecret,
     { expiresIn: '7d' },
   );
 
-  return { accessToken, refreshToken };
+  return { accessToken, refreshToken, tokenId };
+}
+
+async function storeRefreshToken(userId, tokenId) {
+  const key = `refresh:${userId}:${tokenId}`;
+  await redis.set(key, '1', 'EX', REFRESH_TOKEN_TTL);
+}
+
+async function deleteRefreshToken(userId, tokenId) {
+  const key = `refresh:${userId}:${tokenId}`;
+  await redis.del(key);
+}
+
+async function refreshTokenExists(userId, tokenId) {
+  const key = `refresh:${userId}:${tokenId}`;
+  return (await redis.exists(key)) === 1;
 }
 
 export const authService = {
   async register(data) {
+    const { email, password, firstName, lastName, phone, role, organizationId } = data;
+
+    if (role === 'PLATFORM_ADMIN') {
+      throw new ForbiddenError('Cannot register as PLATFORM_ADMIN');
+    }
+
     const existing = await prisma.user.findUnique({
-      where: { email: data.email },
+      where: { email },
     });
 
     if (existing) {
       throw new ConflictError('A user with this email already exists');
     }
 
-    if (data.role === 'ORG_ADMIN' || data.role === 'ORG_STAFF') {
+    if (role === 'ORG_ADMIN' || role === 'ORG_STAFF') {
       const organization = await prisma.organization.findUnique({
-        where: { id: data.organizationId },
+        where: { id: organizationId },
       });
 
       if (!organization) {
@@ -53,16 +82,22 @@ export const authService = {
       }
     }
 
-    const hashedPassword = await bcrypt.hash(data.password, 12);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await prisma.user.create({
       data: {
-        ...data,
+        email,
         password: hashedPassword,
+        firstName,
+        lastName,
+        phone,
+        role,
+        organizationId,
       },
     });
 
-    const { accessToken, refreshToken } = generateTokens(user);
+    const { accessToken, refreshToken, tokenId } = generateTokens(user);
+    await storeRefreshToken(user.id, tokenId);
 
     emailService.sendWelcome(user.email, user.name).catch((err) =>
       logger.error('Failed to send welcome email', { email: user.email, error: err.message })
@@ -76,26 +111,47 @@ export const authService = {
   },
 
   async login(email, password) {
+    const failedKey = `login:failed:${email}`;
+
+    // Check account lockout
+    const attempts = await redis.get(failedKey);
+    if (attempts && parseInt(attempts, 10) >= LOGIN_MAX_ATTEMPTS) {
+      throw new ForbiddenError('Account temporarily locked. Please try again in 15 minutes');
+    }
+
     const user = await prisma.user.findUnique({
       where: { email },
     });
 
     if (!user) {
+      // Increment failed attempts even for non-existent users to prevent enumeration
+      const pipeline = redis.pipeline();
+      pipeline.incr(failedKey);
+      pipeline.expire(failedKey, LOGIN_LOCKOUT_TTL);
+      await pipeline.exec();
       throw new UnauthorizedError('Invalid email or password');
     }
 
     const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
+      const pipeline = redis.pipeline();
+      pipeline.incr(failedKey);
+      pipeline.expire(failedKey, LOGIN_LOCKOUT_TTL);
+      await pipeline.exec();
       throw new UnauthorizedError('Invalid email or password');
     }
+
+    // Successful login — clear failed attempts
+    await redis.del(failedKey);
 
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
     });
 
-    const { accessToken, refreshToken } = generateTokens(user);
+    const { accessToken, refreshToken, tokenId } = generateTokens(user);
+    await storeRefreshToken(user.id, tokenId);
 
     return {
       user: excludePassword(user),
@@ -112,6 +168,11 @@ export const authService = {
       throw new UnauthorizedError('Invalid or expired refresh token');
     }
 
+    // Validate the refresh token exists in Redis
+    if (!decoded.tokenId || !(await refreshTokenExists(decoded.userId, decoded.tokenId))) {
+      throw new UnauthorizedError('Refresh token has been revoked');
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
     });
@@ -120,8 +181,10 @@ export const authService = {
       throw new UnauthorizedError('User not found or inactive');
     }
 
-    // Rotate: issue both a new access token and a new refresh token
-    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
+    // Delete old refresh token and issue new tokens
+    await deleteRefreshToken(decoded.userId, decoded.tokenId);
+    const { accessToken, refreshToken: newRefreshToken, tokenId } = generateTokens(user);
+    await storeRefreshToken(user.id, tokenId);
 
     return { accessToken, refreshToken: newRefreshToken };
   },
@@ -178,6 +241,11 @@ export const authService = {
     });
 
     return { message: 'Password reset successful' };
+  },
+
+  async logout(userId, tokenId) {
+    await deleteRefreshToken(userId, tokenId);
+    return { message: 'Logged out successfully' };
   },
 
   async getMe(userId) {

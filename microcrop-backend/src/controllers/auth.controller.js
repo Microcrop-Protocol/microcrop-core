@@ -47,6 +47,15 @@ export const authController = {
     }
   },
 
+  async logout(req, res, next) {
+    try {
+      const result = await authService.logout(req.user.id, req.body.tokenId);
+      res.status(200).json(formatResponse(result));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getMe(req, res, next) {
     try {
       const result = await authService.getMe(req.user.id);

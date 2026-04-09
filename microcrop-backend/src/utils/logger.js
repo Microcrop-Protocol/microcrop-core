@@ -4,7 +4,10 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
 // Mask sensitive fields in log metadata
-const SENSITIVE_KEYS = ['phoneNumber', 'mpesaPhone', 'mpesaRef', 'nationalId', 'walletAddress', 'resetToken'];
+const SENSITIVE_KEYS = [
+  'phoneNumber', 'mpesaPhone', 'mpesaRef', 'nationalId', 'walletAddress', 'resetToken',
+  'password', 'apiKey', 'privateKey', 'jwtSecret', 'refreshToken', 'accessToken',
+];
 
 function maskValue(key, value) {
   if (!value || typeof value !== 'string') return value;
@@ -35,13 +38,33 @@ const sanitizeFormat = winston.format((info) => {
   return info;
 })();
 
+const isProd = process.env.NODE_ENV === 'production';
+
 const logFormat = printf(({ level, message, timestamp: ts, stack, ...meta }) => {
   const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
   return `${ts} [${level}]: ${stack || message}${metaStr}`;
 });
 
+const consoleFormat = isProd
+  ? combine(logFormat)
+  : combine(colorize(), logFormat);
+
+const fileFormat = isProd
+  ? combine(
+      timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+      errors({ stack: true }),
+      sanitizeFormat,
+      winston.format.json()
+    )
+  : combine(
+      timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+      errors({ stack: true }),
+      sanitizeFormat,
+      logFormat
+    );
+
 const logger = winston.createLogger({
-  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  level: isProd ? 'info' : 'debug',
   format: combine(
     timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     errors({ stack: true }),
@@ -51,13 +74,14 @@ const logger = winston.createLogger({
   defaultMeta: { service: 'microcrop-backend' },
   transports: [
     new winston.transports.Console({
-      format: combine(colorize(), logFormat),
+      format: consoleFormat,
     }),
     new DailyRotateFile({
       filename: 'logs/app-%DATE%.log',
       datePattern: 'YYYY-MM-DD',
       maxSize: '20m',
       maxFiles: '14d',
+      format: fileFormat,
     }),
     new DailyRotateFile({
       filename: 'logs/error-%DATE%.log',
@@ -65,6 +89,7 @@ const logger = winston.createLogger({
       level: 'error',
       maxSize: '20m',
       maxFiles: '30d',
+      format: fileFormat,
     }),
   ],
 });
