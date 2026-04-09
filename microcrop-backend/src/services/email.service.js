@@ -63,8 +63,9 @@ const emailService = {
     return this.send(email, `You're invited to join ${orgName} on MicroCrop`, html);
   },
 
-  async sendPasswordReset(email, token) {
-    const resetUrl = `${env.frontendUrl}/reset-password?token=${token}`;
+  async sendPasswordReset(email, token, resetBaseUrl) {
+    const baseUrl = resetBaseUrl || env.frontendUrl;
+    const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
     const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">

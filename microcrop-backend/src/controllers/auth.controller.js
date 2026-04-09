@@ -31,7 +31,7 @@ export const authController = {
 
   async forgotPassword(req, res, next) {
     try {
-      const result = await authService.forgotPassword(req.body.email);
+      const result = await authService.forgotPassword(req.body.email, req.body.resetBaseUrl);
       res.status(200).json(formatResponse(result));
     } catch (error) {
       next(error);

@@ -189,7 +189,7 @@ export const authService = {
     return { accessToken, refreshToken: newRefreshToken };
   },
 
-  async forgotPassword(email) {
+  async forgotPassword(email, resetBaseUrl) {
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (user) {
@@ -204,7 +204,7 @@ export const authService = {
         },
       });
 
-      emailService.sendPasswordReset(email, rawToken).catch((err) =>
+      emailService.sendPasswordReset(email, rawToken, resetBaseUrl).catch((err) =>
         logger.error('Failed to send password reset email', { email, error: err.message })
       );
     }
