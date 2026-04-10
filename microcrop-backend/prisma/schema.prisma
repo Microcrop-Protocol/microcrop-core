@@ -168,7 +168,7 @@ model Farmer {
 
   // Location
   county    String
-  subCounty String
+  subCounty String?
   ward      String?
   village   String?
 
