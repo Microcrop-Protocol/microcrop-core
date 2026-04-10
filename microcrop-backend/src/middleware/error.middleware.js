@@ -13,7 +13,10 @@ export function errorHandler(err, req, res, _next) {
   };
 
   if (err.isOperational) {
-    logger.warn(err.message, errorContext);
+    logger.warn(err.message, {
+      ...errorContext,
+      ...(err.details && { details: err.details }),
+    });
   } else {
     logger.error('Unexpected error', {
       ...errorContext,
