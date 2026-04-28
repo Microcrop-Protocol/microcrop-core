@@ -52,6 +52,18 @@ export const applicationDocuments = upload.fields([
   { name: 'taxPinCert', maxCount: 1 },
 ]);
 
+// Single image upload — used by the blog admin endpoints (cover images, inline body images)
+const blogImageUpload = multer({
+  storage,
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error(`Invalid image type: ${file.mimetype}. Allowed: JPEG, PNG, WebP, GIF`), false);
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+export const blogImage = blogImageUpload.single('image');
+
 // Error handler for multer
 export function handleUploadError(err, req, res, next) {
   if (err instanceof multer.MulterError) {

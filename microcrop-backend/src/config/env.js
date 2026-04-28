@@ -98,6 +98,15 @@ export const env = {
   // Frontend
   frontendUrl: optional('FRONTEND_URL', 'https://network.microcrop.app'),
 
+  // Public-facing absolute URL for this API (used to build absolute image URLs)
+  publicApiUrl: optional('PUBLIC_API_URL', ''),
+  // Optional CDN base for /uploads — falls back to PUBLIC_API_URL → BACKEND_URL
+  imageCdnBaseUrl: optional('IMAGE_CDN_BASE_URL', ''),
+
+  // Marketing-site revalidation webhook (Next.js on microcrop.app)
+  blogRevalidateUrl: optional('BLOG_REVALIDATE_URL', ''),
+  blogRevalidateSecret: optional('BLOG_REVALIDATE_SECRET', ''),
+
   // Optional APIs
   weatherxmApiKey: optional('WEATHERXM_API_KEY', ''),
   weatherxmApiUrl: optional('WEATHERXM_API_URL', 'https://api.weatherxm.com/v1'),

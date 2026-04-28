@@ -33,6 +33,8 @@ import { invitationRouter } from './routes/invitation.routes.js';
 import { herdsRouter } from './routes/herds.routes.js';
 import { insuranceUnitsRouter } from './routes/insurance-units.routes.js';
 import { satelliteRouter } from './routes/satellite.routes.js';
+import { blogPublicRouter } from './routes/blog.public.routes.js';
+import { blogAdminRouter } from './routes/blog.admin.routes.js';
 
 const app = express();
 
@@ -152,6 +154,11 @@ app.use('/api/applications', applicationRouter);
 app.use('/api/invitations', invitationRouter);
 app.use('/api/insurance-units', insuranceUnitsRouter);
 app.use('/api/satellite', satelliteRouter);
+
+// Public blog reads — no auth, mounted at /api so /api/posts and /api/categories match the spec
+app.use('/api', blogPublicRouter);
+// Admin blog management — PLATFORM_ADMIN only
+app.use('/api/dashboard/platform/blog', blogAdminRouter);
 
 // 404 handler
 app.use((_req, res) => {
