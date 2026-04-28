@@ -64,6 +64,15 @@ export const authController = {
       next(error);
     }
   },
+
+  async updateMe(req, res, next) {
+    try {
+      const result = await authService.updateMe(req.user.id, req.body);
+      res.status(200).json(formatResponse(result));
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 export default authController;

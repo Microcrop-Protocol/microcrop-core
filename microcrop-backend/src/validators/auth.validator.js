@@ -43,6 +43,22 @@ export const forgotPasswordSchema = Joi.object({
   email: Joi.string().email().required(),
 });
 
+export const updateMeSchema = Joi.object({
+  firstName: Joi.string().min(1).max(100).optional(),
+  lastName: Joi.string().min(1).max(100).optional(),
+  phone: Joi.string()
+    .pattern(/^\+254\d{9}$/)
+    .optional()
+    .allow(null, '')
+    .messages({
+      'string.pattern.base': 'Phone must be a valid Kenyan number (+254XXXXXXXXX)',
+    }),
+  // Author profile fields (used when this user authors blog Posts)
+  bio: Joi.string().max(500).optional().allow(null, ''),
+  avatarUrl: Joi.string().max(500).optional().allow(null, ''),
+  displayRole: Joi.string().max(100).optional().allow(null, ''),
+}).min(1);
+
 export const resetPasswordSchema = Joi.object({
   token: Joi.string().required(),
   password: Joi.string()

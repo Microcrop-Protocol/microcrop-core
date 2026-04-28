@@ -260,6 +260,36 @@ export const authService = {
 
     return excludePassword(user);
   },
+
+  async updateMe(userId, data) {
+    // If phone is changing, verify uniqueness up-front so the dashboard gets a
+    // proper 409 instead of a generic Prisma error.
+    if (data.phone) {
+      const taken = await prisma.user.findFirst({
+        where: { phone: data.phone, NOT: { id: userId } },
+      });
+      if (taken) {
+        throw new ConflictError('Phone number is already in use');
+      }
+    }
+
+    // Pick only the fields we allow self-service updates for.
+    const update = {};
+    if (data.firstName !== undefined) update.firstName = data.firstName;
+    if (data.lastName !== undefined) update.lastName = data.lastName;
+    if (data.phone !== undefined) update.phone = data.phone === '' ? null : data.phone;
+    if (data.bio !== undefined) update.bio = data.bio === '' ? null : data.bio;
+    if (data.avatarUrl !== undefined) update.avatarUrl = data.avatarUrl === '' ? null : data.avatarUrl;
+    if (data.displayRole !== undefined) update.displayRole = data.displayRole === '' ? null : data.displayRole;
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: update,
+      include: { organization: true },
+    });
+
+    return excludePassword(user);
+  },
 };
 
 export default authService;
