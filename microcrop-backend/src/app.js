@@ -83,10 +83,23 @@ app.use((req, _res, next) => {
 app.use(morgan('combined', { stream }));
 app.use(apiLimiter);
 
-// Static file serving for uploads (in production, use S3/GCS)
-if (!env.isProd) {
-  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
-}
+// Static file serving for uploads (blog cover/inline images, user avatars, KYB docs).
+// Note: Railway containers have ephemeral filesystems — uploads are wiped on every
+// redeploy unless a persistent volume is mounted. Migrate to S3/R2 before this becomes
+// a problem. For now, allow cross-origin embedding so the marketing site at
+// microcrop.app can render images from this API host.
+app.use(
+  '/uploads',
+  (_req, res, next) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    next();
+  },
+  express.static(path.join(process.cwd(), 'uploads'), {
+    fallthrough: true,
+    index: false,
+  }),
+);
 
 // Liveness probe — is the process alive?
 app.get('/health', (_req, res) => {
